@@ -35,7 +35,7 @@ export default function SetupWizard() {
   const [installing, setInstalling] = useState(false);
 
   const { versions: protonVersions, loading: protonLoading } = useProtonVersions();
-  const { config, saveEnvironment } = useEnvironment();
+  const { config, systemInfo, saveEnvironment } = useEnvironment();
   const { progress, logs } = useInstallProgress();
 
   // Initialize local config once
@@ -71,7 +71,7 @@ export default function SetupWizard() {
   function canProceed() {
     switch (currentStep) {
       case 1: return true; // Proton auto-selects if none chosen
-      case 2: return localConfig.wine_prefix_path.length > 0;
+      case 2: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
       case 3: return selectedDeps.length > 0;
       default: return true;
     }

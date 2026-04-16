@@ -155,7 +155,7 @@ export default function Dashboard() {
           title="Proton 版本"
           value={
             config.proton_path
-              ? config.proton_path.split("/").last().unwrap_or("已选择")
+              ? config.proton_path.split("/").pop() || "已选择"
               : "自动检测"
           }
           subtitle={systemInfo?.proton_versions.length ? `${systemInfo.proton_versions.length} 个可用版本` : ""}
