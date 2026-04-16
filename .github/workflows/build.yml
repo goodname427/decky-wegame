@@ -22,7 +22,7 @@ jobs:
         run: |
           pacman -S --noconfirm --needed \
             gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
-            openssl pkg-config xdotool dbus-glib-2
+            openssl pkg-config xdotool dbus-glib
 
       - name: Checkout
         uses: actions/checkout@v4
