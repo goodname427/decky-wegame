@@ -13,14 +13,10 @@ jobs:
       image: archlinux:latest
 
     steps:
-      - name: Install base dependencies
+      - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel git curl wget file patchelf nodejs npm pnpm rust
-
-      - name: Install Tauri dependencies
-        run: |
-          pacman -S --noconfirm --needed \
+            base-devel git curl wget file nodejs npm pnpm rust \
             gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
             openssl pkg-config xdotool dbus-glib
 
@@ -39,10 +35,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: src-tauri
+          args: --bundles deb
 
-      - name: Upload AppImage
+      - name: Upload deb
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: WeGame-Launcher-x86_64
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          name: WeGame-Launcher-arch-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
