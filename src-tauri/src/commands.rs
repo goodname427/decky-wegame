@@ -51,7 +51,7 @@ pub async fn get_prefix_info(config: EnvironmentConfig) -> Result<PrefixInfo, St
 }
 
 #[derive(serde::Serialize)]
-struct PrefixInfo {
+pub struct PrefixInfo {
     exists: bool,
     size_mb: f64,
     path: String,

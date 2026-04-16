@@ -4,12 +4,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-const STEAM_APPS_DIR: &str = "~/.steam/root/steamapps";
 const DESKTOP_ENTRY_DIR: &str = "~/.local/share/applications";
-
-fn get_steam_apps_dir() -> PathBuf {
-    expand_path(STEAM_APPS_DIR)
-}
 
 pub fn generate_desktop_entry(game: &GameEntry, config: &EnvironmentConfig) -> Result<PathBuf> {
     let desktop_dir = expand_path(DESKTOP_ENTRY_DIR);
@@ -20,12 +15,6 @@ pub fn generate_desktop_entry(game: &GameEntry, config: &EnvironmentConfig) -> R
         .replace(|c: char| !c.is_alphanumeric() && c != ' ' && c != '-', "_");
     let filename = format!("decky-wegame-{}.desktop", safe_name.to_lowercase());
     let path = desktop_dir.join(&filename);
-
-    let proton_path = if config.proton_path.is_empty() {
-        "auto".to_string()
-    } else {
-        config.proton_path.clone()
-    };
 
     let wine_prefix_str = config.wine_prefix_path.clone();
     let exe_path = game.exe_path.clone();
@@ -60,7 +49,7 @@ pub fn generate_desktop_entry(game: &GameEntry, config: &EnvironmentConfig) -> R
 }
 
 pub fn add_to_steam(game: &GameEntry, desktop_path: &PathBuf) -> Result<String> {
-    let shortcut_id = uuid::Uuid::new_v4().to_string();
+    let _shortcut_id = uuid::Uuid::new_v4().to_string();
 
     // Generate a Steam-compatible shortcut info string that users can use
     // with Steam's "Add Non-Steam Game" feature
