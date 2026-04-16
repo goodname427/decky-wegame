@@ -19,7 +19,22 @@ jobs:
             base-devel git curl wget file nodejs npm pnpm rust \
             gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
             openssl pkg-config xdotool dbus-glib \
-            fuse2 appstream
+            fuse2 appstream gdk-pixbuf2
+
+      - name: Fix gdk-pixbuf loaders for AppImage
+        run: |
+          # Ensure gdk-pixbuf loaders directory exists and cache is generated
+          GDK_PIXBUF_DIR=$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders")
+          GDK_PIXBUF_BASE=$(dirname "$GDK_PIXBUF_DIR")
+          echo "gdk-pixbuf module dir: $GDK_PIXBUF_DIR"
+          echo "gdk-pixbuf base dir: $GDK_PIXBUF_BASE"
+          ls -la "$GDK_PIXBUF_BASE" 2>/dev/null || echo "Base dir does not exist"
+          ls -la "$GDK_PIXBUF_DIR" 2>/dev/null || echo "Module dir does not exist"
+          # Create the expected directory structure if it doesn't exist
+          mkdir -p /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders
+          # Update the loaders cache
+          gdk-pixbuf-query-loaders --update-cache || true
+          ls -la /usr/lib/gdk-pixbuf-2.0/2.10.0/
 
       - name: Checkout
         uses: actions/checkout@v4
