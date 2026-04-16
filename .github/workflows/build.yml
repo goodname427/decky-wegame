@@ -18,7 +18,8 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel git curl wget file nodejs npm pnpm rust \
             gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
-            openssl pkg-config xdotool dbus-glib
+            openssl pkg-config xdotool dbus-glib \
+            fuse2 appstream
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,11 +36,18 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: src-tauri
-          args: --bundles deb
+          args: --bundles deb,appimage
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: WeGame-Launcher-arch-deb
+          name: WeGame-Launcher-deb
           path: src-tauri/target/release/bundle/deb/*.deb
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: WeGame-Launcher-AppImage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
