@@ -58,7 +58,7 @@ export function useEnvironment() {
   };
 }
 
-export function useProtonVersions() {
+function useProtonVersions() {
   const [versions, setVersions] = useState<ProtonInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
