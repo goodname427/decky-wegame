@@ -8,43 +8,27 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
 
     steps:
+      - name: Install base dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git curl wget file patchelf nodejs npm pnpm rust
+
+      - name: Install Tauri dependencies
+        run: |
+          pacman -S --noconfirm --needed \
+            gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
+            openssl pkg-config xdotool dbus-glib-2
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        timeout-minutes: 10
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            libssl-dev \
-            pkg-config \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            file \
-            patchelf \
-            wget \
-            libxdo-dev \
-            libdbusmenu-gtk3-dev
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install pnpm
-        run: npm install -g pnpm
-
       - name: Install frontend dependencies
         run: pnpm install
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -62,10 +46,3 @@ jobs:
         with:
           name: WeGame-Launcher-x86_64
           path: src-tauri/target/release/bundle/appimage/*.AppImage
-
-      - name: Upload deb
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: WeGame-Launcher-deb
-          path: src-tauri/target/release/bundle/deb/*.deb
