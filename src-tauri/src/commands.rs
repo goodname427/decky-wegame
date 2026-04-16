@@ -1,10 +1,10 @@
+use crate::config::{load_config, save_config};
 use crate::dependencies;
 use crate::environment::*;
 use crate::launcher::{check_wegame_status, launch_wegame, stop_wegame};
-use crate::lib::*;
 use crate::proton::*;
 use crate::steam::{add_to_steam, generate_desktop_entry, list_wegame_games};
-use serde::Serialize;
+use crate::types::*;
 use tauri::State;
 use std::sync::Mutex;
 
@@ -50,6 +50,7 @@ pub async fn get_prefix_info(config: EnvironmentConfig) -> Result<PrefixInfo, St
     Ok(PrefixInfo { exists, size_mb, path })
 }
 
+#[derive(serde::Serialize)]
 struct PrefixInfo {
     exists: bool,
     size_mb: f64,

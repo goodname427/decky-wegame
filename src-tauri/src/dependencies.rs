@@ -1,9 +1,8 @@
-use crate::environment::get_prefix_path;
-use crate::lib::*;
+use crate::types::*;
 use anyhow::{Context, Result};
 use chrono::Local;
-use std::collections::HashMap;
 use std::path::PathBuf;
+use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as AsyncCommand;
 

@@ -1,4 +1,4 @@
-use crate::lib::EnvironmentConfig;
+use crate::types::EnvironmentConfig;
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;

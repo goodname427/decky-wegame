@@ -1,5 +1,6 @@
 use crate::environment::{expand_path, get_prefix_path};
-use crate::lib::EnvironmentConfig;
+use crate::types::EnvironmentConfig;
+use crate::types::WeGameStatus;
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::collections::HashMap;
@@ -69,7 +70,7 @@ async fn do_launch(wegame_exe: &std::path::Path, config: &EnvironmentConfig) -> 
 
     let wegame_str = wegame_exe.to_string_lossy().to_string();
 
-    let mut cmd = Command::new(proton_path.to_string_lossy().to_string());
+    let mut cmd = Command::new(&proton_path);
     cmd.arg("run")
         .arg(&wegame_str);
         

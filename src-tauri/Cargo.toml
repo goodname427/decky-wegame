@@ -5,10 +5,6 @@ description = "WeGame Launcher for Steam Deck - Run Tencent WeGame on SteamOS"
 authors = ["CGL"]
 edition = "2021"
 
-[lib]
-name = "decky_wegame_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

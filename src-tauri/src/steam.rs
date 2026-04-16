@@ -1,5 +1,5 @@
 use crate::environment::expand_path;
-use crate::lib::*;
+use crate::types::*;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;

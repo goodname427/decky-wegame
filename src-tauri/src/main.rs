@@ -5,7 +5,7 @@ mod environment;
 mod launcher;
 mod proton;
 mod steam;
-mod lib;
+mod types;
 
 fn main() {
     tauri::Builder::default()
