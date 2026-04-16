@@ -25,7 +25,7 @@ pub const DEPENDENCY_DEFINITIONS: &[(&str, &str, DependencyCategory, &str, f64, 
     ("vcrun6", "Visual Basic 6 Runtime (vcrun6)", DependencyCategory::Other, "VB6 运行时兼容层", 5.0, false),
 ];
 
-pub fn winetricks_id(dep_id: &str) -> &'static str {
+pub fn winetricks_id(dep_id: &str) -> &str {
     match dep_id {
         "dotnet46" => "dotnet46",
         "dotnet48" => "dotnet48",

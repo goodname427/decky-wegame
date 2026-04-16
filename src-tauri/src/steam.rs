@@ -1,7 +1,6 @@
 use crate::environment::expand_path;
 use crate::lib::*;
 use anyhow::{Context, Result};
-use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
 

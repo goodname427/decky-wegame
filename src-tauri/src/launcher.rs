@@ -3,7 +3,7 @@ use crate::lib::EnvironmentConfig;
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::collections::HashMap;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use tokio::sync::Mutex;
 
 static WEGAME_PROCESS: Mutex<Option<u32>> = Mutex::const_new(None);
@@ -45,7 +45,7 @@ async fn do_launch(wegame_exe: &std::path::Path, config: &EnvironmentConfig) -> 
         super::proton::get_default_proton_path(&versions)
             .ok_or_else(|| anyhow::anyhow!("No Proton version found. Install GE-Proton first."))?
     } else {
-        expand_path(&config.proton_path)
+        expand_path(&config.proton_path).to_string_lossy().to_string()
     };
     
     let proton_dir = std::path::Path::new(&proton_path)

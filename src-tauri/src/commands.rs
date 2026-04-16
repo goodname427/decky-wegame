@@ -1,11 +1,10 @@
-use crate::config::{load_config, save_config};
 use crate::dependencies;
 use crate::environment::*;
 use crate::launcher::{check_wegame_status, launch_wegame, stop_wegame};
 use crate::lib::*;
 use crate::proton::*;
 use crate::steam::{add_to_steam, generate_desktop_entry, list_wegame_games};
-use anyhow::Result;
+use serde::Serialize;
 use tauri::State;
 use std::sync::Mutex;
 
@@ -159,7 +158,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
 
     let architecture = std::env::consts::ARCH.to_string();
 
-    let (total_gb, free_gb) = get_disk_info();
+    let (total_disk_gb, free_disk_gb) = get_disk_info();
 
     let proton_versions = scan_proton_versions().unwrap_or_default();
     let winetricks_available = check_winetricks_available();

@@ -5,13 +5,7 @@ mod environment;
 mod launcher;
 mod proton;
 mod steam;
-
-use config::{load_config, save_config};
-use dependencies::install_dependencies;
-use environment::*;
-use launcher::{check_wegame_status, launch_wegame, stop_wegame};
-use lib::*;
-use proton::{check_winetricks_available, scan_proton_versions, validate_proton_path};
+mod lib;
 
 fn main() {
     tauri::Builder::default()
