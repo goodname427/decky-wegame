@@ -49,7 +49,7 @@ async fn do_launch(wegame_exe: &std::path::Path, config: &EnvironmentConfig) -> 
         expand_path(&config.proton_path).to_string_lossy().to_string()
     };
     
-    let proton_dir = std::path::Path::new(&proton_path)
+    let _proton_dir = std::path::Path::new(&proton_path)
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Invalid Proton path"))?;
 

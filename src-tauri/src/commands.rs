@@ -1,5 +1,5 @@
 use crate::config::{load_config, save_config};
-use crate::dependencies;
+use crate::dependencies::{self, install_dependencies};
 use crate::environment::*;
 use crate::launcher::{check_wegame_status, launch_wegame, stop_wegame};
 use crate::proton::*;

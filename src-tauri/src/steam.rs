@@ -133,7 +133,7 @@ fn find_exe_in_dir(dir: &PathBuf, parent_name: &str, games: &mut Vec<GameEntry>)
     ];
 
     for name in &exe_names {
-        let pattern = dir.join(name);
+        let _pattern = dir.join(name);
         if *name == "*.exe" {
             // Glob search
             if let Ok(entries) = fs::read_dir(dir) {
