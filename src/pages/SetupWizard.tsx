@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronLeft, ChevronRight, Check, Zap, FolderCog, ListChecks, Rocket } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Zap, Rocket } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
-import useProtonVersions from "../hooks/useProtonVersions";
-import useEnvironment from "../hooks/useEnvironment";
+import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import useInstallProgress from "../hooks/useInstallProgress";
 import LogViewer from "../components/LogViewer";
 import type { EnvironmentConfig, DependencyCategory } from "../types";
@@ -36,18 +35,18 @@ export default function SetupWizard() {
   const [installing, setInstalling] = useState(false);
 
   const { versions: protonVersions, loading: protonLoading } = useProtonVersions();
-  const { config, saveEnvironment, systemInfo } = useEnvironment();
+  const { config, saveEnvironment } = useEnvironment();
   const { progress, logs } = useInstallProgress();
 
-  // Initialize local config
-  if (!localConfig) {
+  // Initialize local config once
+  const initializedRef = useState(false);
+  if (!initializedRef[0] && config) {
+    initializedRef[1](true);
     setLocalConfig(config);
-    // Pre-select all required deps
-    import("../utils/constants").then(({ DEPENDENCY_LIST }) => {
-      setSelectedDeps(DEPENDENCY_LIST.filter((d) => d.required).map((d) => d.id));
-    });
-    return null;
+    setSelectedDeps(DEPENDENCY_LIST.filter((d) => d.required).map((d) => d.id));
   }
+
+  if (!localConfig) return null;
 
   const totalSteps = STEPS.length;
 

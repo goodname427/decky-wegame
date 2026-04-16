@@ -40,3 +40,5 @@ export function useInstallProgress() {
 
   return { progress, logs, reset };
 }
+
+export default useInstallProgress;

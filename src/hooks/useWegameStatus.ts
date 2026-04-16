@@ -25,3 +25,5 @@ export function useWegameStatus(pollInterval = 3000) {
 
   return { status, loading, refetch: fetchStatus };
 }
+
+export default useWegameStatus;

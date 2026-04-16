@@ -80,3 +80,6 @@ export function useProtonVersions() {
 
   return { versions, loading, refetch: fetchVersions };
 }
+
+export default useEnvironment;
+export { useProtonVersions };

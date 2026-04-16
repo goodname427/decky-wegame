@@ -9,15 +9,20 @@ import {
   Upload,
   AlertTriangle,
 } from "lucide-react";
-import useEnvironment from "../hooks/useEnvironment";
-import useProtonVersions from "../hooks/useProtonVersions";
+import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 export default function Settings() {
   const { config, saveEnvironment, systemInfo } = useEnvironment();
   const { versions: protonVersions } = useProtonVersions();
 
-  const [localConfig, setLocalConfig] = useState(config);
+  const [localConfig, setLocalConfig] = useState(config || {
+    wine_prefix_path: "",
+    proton_path: "",
+    wegame_install_path: "",
+    extra_env_vars: {},
+    launch_args: "",
+  });
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
   const [envVars, setEnvVars] = useState<[string, string][]>(
@@ -31,13 +36,13 @@ export default function Settings() {
   }
 
   function updateField<K extends keyof typeof localConfig>(key: K, value: (typeof localConfig)[K]) {
-    setLocalConfig((prev) => ({ ...prev, [key]: value }));
+    setLocalConfig((prev: typeof localConfig) => ({ ...prev, [key]: value }));
     setSaved(false);
   }
 
   async function handleSave() {
     const newEnv: Record<string, string> = {};
-    for (const [k, v] of envVars) {
+    for (const [k, v] of envVars as [string, string][]) {
       if (k.trim()) newEnv[k.trim()] = v;
     }
     await saveEnvironment({ ...localConfig, extra_env_vars: newEnv });

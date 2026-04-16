@@ -11,8 +11,8 @@ import {
 import ProgressBar from "../components/ProgressBar";
 import LogViewer from "../components/LogViewer";
 import ConfirmDialog from "../components/ConfirmDialog";
-import useEnvironment from "../hooks/useEnvironment";
-import useInstallProgress from "../hooks/useInstallProgress";
+import { useEnvironment } from "../hooks/useEnvironment";
+import { useInstallProgress } from "../hooks/useInstallProgress";
 import type { DependencyItem, DependencyCategory } from "../types";
 
 const CATEGORY_LABELS: Record<DependencyCategory, string> = {
