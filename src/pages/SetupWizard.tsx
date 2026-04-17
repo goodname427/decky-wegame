@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "../utils/api";
-import { ChevronLeft, ChevronRight, Check, Zap, Rocket } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import useInstallProgress from "../hooks/useInstallProgress";
@@ -28,7 +28,12 @@ function RocketIcon({ className }: { className?: string }) {
   return <Rocket className={className || ""} />;
 }
 
-export default function SetupWizard() {
+interface SetupWizardProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [localConfig, setLocalConfig] = useState<EnvironmentConfig | null>(null);
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
@@ -46,9 +51,12 @@ export default function SetupWizard() {
     setSelectedDeps(DEPENDENCY_LIST.filter((d) => d.required).map((d) => d.id));
   }
 
-  if (!localConfig) return null;
+  if (!open || !localConfig) return null;
 
   const totalSteps = STEPS.length;
+
+  // Allow closing only when not installing
+  const canClose = !installing && progress.status !== "running";
 
   function updateConfig(partial: Partial<EnvironmentConfig>) {
     setLocalConfig((prev) => ({ ...prev!, ...partial }));
@@ -78,7 +86,26 @@ export default function SetupWizard() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={canClose ? onClose : undefined}
+      />
+
+      {/* Modal content */}
+      <div className="relative z-10 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-surface-dark p-6 shadow-2xl mx-4">
+        {/* Close button */}
+        {canClose && (
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-4 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-gray-200"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
+
+        <div className="space-y-6">
       {/* Step Indicator */}
       <div className="glass-card p-4">
         <div className="flex items-center justify-between">
@@ -370,16 +397,28 @@ export default function SetupWizard() {
           步骤 {currentStep} / {totalSteps}
         </div>
 
-        {currentStep < totalSteps ? (
-          <button
-            onClick={() => setCurrentStep(currentStep + 1)}
-            disabled={!canProceed()}
-            className="neon-primary flex items-center gap-1.5 text-sm disabled:opacity-30"
-          >
-            下一步
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {progress.status === "completed" && (
+            <button
+              onClick={onClose}
+              className="neon-primary flex items-center gap-1.5 text-sm"
+            >
+              完成
+            </button>
+          )}
+          {currentStep < totalSteps && progress.status !== "completed" ? (
+            <button
+              onClick={() => setCurrentStep(currentStep + 1)}
+              disabled={!canProceed()}
+              className="neon-primary flex items-center gap-1.5 text-sm disabled:opacity-30"
+            >
+              下一步
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+        </div>
       </div>
     </div>
   );

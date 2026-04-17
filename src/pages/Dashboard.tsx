@@ -120,7 +120,7 @@ export default function Dashboard() {
             停止进程
           </button>
         )}
-        <button onClick={() => navigate("/dependencies")} className="neon-secondary flex items-center justify-center gap-2 py-3 text-sm">
+        <button onClick={() => navigate("/settings")} className="neon-secondary flex items-center justify-center gap-2 py-3 text-sm">
           <PackageCheck className="h-4 w-4" />
           安装依赖
         </button>
@@ -128,7 +128,7 @@ export default function Dashboard() {
           <Plus className="h-4 w-4" />
           添加到 Steam
         </button>
-        <button onClick={() => navigate("/setup")} className="neon-secondary flex items-center justify-center gap-2 py-3 text-sm">
+        <button onClick={() => navigate("/settings")} className="neon-secondary flex items-center justify-center gap-2 py-3 text-sm">
           <RefreshCw className="h-4 w-4" />
           环境设置
         </button>
@@ -161,7 +161,7 @@ export default function Dashboard() {
           subtitle={systemInfo?.proton_versions.length ? `${systemInfo.proton_versions.length} 个可用版本` : ""}
           icon={<Cpu className="h-3.5 w-3.5" />}
           status={config.proton_path ? "ready" : "warning"}
-          onClick={() => navigate("/setup")}
+          onClick={() => navigate("/settings")}
         />
         <StatusCard
           title="WeGame 路径"
@@ -177,7 +177,7 @@ export default function Dashboard() {
           subtitle="点击查看详情"
           icon={<Layers className="h-3.5 w-3.5" />}
           status="idle"
-          onClick={() => navigate("/dependencies")}
+          onClick={() => navigate("/settings")}
         />
       </div>
 

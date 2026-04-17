@@ -54,8 +54,9 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   });
 
   // Dependencies
-  ipcMain.handle("get_dependency_list", async () => {
-    return getDependencyList();
+  ipcMain.handle("get_dependency_list", async (_event, args?: { config?: EnvironmentConfig }) => {
+    const prefixPath = args?.config ? getPrefixPath(args.config) : undefined;
+    return getDependencyList(prefixPath);
   });
 
   ipcMain.handle("start_install_dependencies", async (_event, args: { config: EnvironmentConfig; selectedIds: string[] }) => {

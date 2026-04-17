@@ -1,8 +1,6 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
-  Settings2,
-  PackageCheck,
   Rocket,
   Settings as SettingsIcon,
   HelpCircle,
@@ -17,11 +15,9 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "主控台" },
-  { to: "/setup", icon: Settings2, label: "环境设置" },
-  { to: "/dependencies", icon: PackageCheck, label: "依赖管理" },
+  { to: "/", icon: LayoutDashboard, label: "控制台" },
   { to: "/launcher", icon: Rocket, label: "启动器" },
-  { to: "/settings", icon: SettingsIcon, label: "高级配置" },
+  { to: "/settings", icon: SettingsIcon, label: "设置" },
   { to: "/about", icon: HelpCircle, label: "关于帮助" },
 ];
 

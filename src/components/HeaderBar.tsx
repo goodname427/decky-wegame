@@ -2,8 +2,6 @@ import { useLocation } from "react-router-dom";
 import {
   Menu,
   LayoutDashboard,
-  Settings2,
-  PackageCheck,
   Rocket,
   Settings as SettingsIcon,
   HelpCircle,
@@ -14,11 +12,9 @@ interface HeaderBarProps {
 }
 
 const routeTitles: Record<string, { title: string; icon: React.ElementType }> = {
-  "/": { title: "主控台", icon: LayoutDashboard },
-  "/setup": { title: "环境设置", icon: Settings2 },
-  "/dependencies": { title: "依赖管理", icon: PackageCheck },
+  "/": { title: "控制台", icon: LayoutDashboard },
   "/launcher": { title: "启动器", icon: Rocket },
-  "/settings": { title: "高级配置", icon: SettingsIcon },
+  "/settings": { title: "设置", icon: SettingsIcon },
   "/about": { title: "关于帮助", icon: HelpCircle },
 };
 

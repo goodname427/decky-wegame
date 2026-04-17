@@ -4,6 +4,7 @@ import { expandPath, getPrefixPath } from "./environment";
 import { scanProtonVersions, getDefaultProtonPath } from "./proton";
 import path from "path";
 import fs from "fs";
+import { launcherLogger as log } from "./logger";
 
 let wegameProcessPid: number | null = null;
 let wegameStartTime: string | null = null;
@@ -48,6 +49,7 @@ export async function launchWegame(
     }
   }
 
+  log.info(`WeGame executable resolved: ${wegameExe}`);
   return doLaunch(wegameExe, config);
 }
 
@@ -55,18 +57,27 @@ async function doLaunch(
   wegameExe: string,
   config: EnvironmentConfig
 ): Promise<WeGameStatus> {
+  log.separator();
+  log.info("=== WeGame Launch Start ===");
+  log.info(`WeGame exe: ${wegameExe}`);
+  log.info(`Config: ${JSON.stringify(config, null, 2)}`);
+
   let protonPath: string;
   if (config.proton_path) {
     protonPath = expandPath(config.proton_path);
+    log.info(`Using user-specified Proton: ${protonPath}`);
   } else {
     const versions = scanProtonVersions();
+    log.info(`Scanned Proton versions: ${versions.map(v => v.name).join(", ") || "(none)"}`);
     const defaultPath = getDefaultProtonPath(versions);
     if (!defaultPath) {
+      log.error("No Proton version found!");
       throw new Error(
         "No Proton version found. Install GE-Proton first."
       );
     }
     protonPath = defaultPath;
+    log.info(`Auto-selected Proton: ${protonPath}`);
   }
 
   const prefixPath = getPrefixPath(config);
@@ -94,6 +105,10 @@ async function doLaunch(
     args.push(config.launch_args);
   }
 
+  log.info(`Spawn command: ${protonPath} ${args.join(" ")}`);
+  log.info(`Working directory: ${path.dirname(wegameExe)}`);
+  log.info(`Environment variables: WINEPREFIX=${env.WINEPREFIX}, STEAM_COMPAT_DATA_PATH=${env.STEAM_COMPAT_DATA_PATH}`);
+
   const child = spawn(protonPath, args, {
     cwd: path.dirname(wegameExe),
     env,
@@ -103,6 +118,33 @@ async function doLaunch(
 
   wegameProcessPid = child.pid ?? null;
   wegameStartTime = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+  log.info(`Process spawned with PID: ${wegameProcessPid}`);
+
+  // Capture stdout/stderr to log file
+  child.stdout?.on("data", (data: Buffer) => {
+    for (const line of data.toString().split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed) log.info(`[stdout] ${trimmed}`);
+    }
+  });
+
+  child.stderr?.on("data", (data: Buffer) => {
+    for (const line of data.toString().split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed) log.warn(`[stderr] ${trimmed}`);
+    }
+  });
+
+  child.on("close", (code) => {
+    log.info(`WeGame process exited with code: ${code}`);
+    wegameProcessPid = null;
+    wegameStartTime = null;
+  });
+
+  child.on("error", (err) => {
+    log.error(`WeGame process error: ${err.message}`);
+  });
 
   // Don't wait for the child to exit
   child.unref();

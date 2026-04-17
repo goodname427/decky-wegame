@@ -1,0 +1,59 @@
+import { useState } from "react";
+import { PackageCheck, Settings as SettingsIcon, Settings2 } from "lucide-react";
+import Dependencies from "./Dependencies";
+import Settings from "./Settings";
+
+type SubTab = "dependencies" | "advanced";
+
+interface SettingsPageProps {
+  onOpenSetupWizard?: () => void;
+}
+
+export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
+  const [activeTab, setActiveTab] = useState<SubTab>("dependencies");
+
+  const tabs: { id: SubTab; label: string; icon: React.ElementType }[] = [
+    { id: "dependencies", label: "依赖管理", icon: PackageCheck },
+    { id: "advanced", label: "高级配置", icon: SettingsIcon },
+  ];
+
+  return (
+    <div className="space-y-4 max-w-5xl mx-auto">
+      {/* Sub-tab bar + Re-setup button */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1 rounded-xl bg-surface-light/40 p-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                activeTab === tab.id
+                  ? "bg-primary/15 text-primary shadow-sm"
+                  : "text-gray-400 hover:bg-white/5 hover:text-gray-300"
+              }`}
+            >
+              <tab.icon className="h-4 w-4" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {onOpenSetupWizard && (
+          <button
+            onClick={onOpenSetupWizard}
+            className="neon-secondary flex items-center gap-1.5 text-sm"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            重新配置环境
+          </button>
+        )}
+      </div>
+
+      {/* Sub-tab content */}
+      <div className="animate-fade-in">
+        {activeTab === "dependencies" && <Dependencies />}
+        {activeTab === "advanced" && <Settings />}
+      </div>
+    </div>
+  );
+}

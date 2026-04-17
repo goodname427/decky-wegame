@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "../utils/api";
 import {
   RefreshCw,
@@ -52,6 +52,28 @@ export default function Dependencies() {
   );
   const [filter, setFilter] = useState<FilterType>("all");
   const [showReinstallConfirm, setShowReinstallConfirm] = useState(false);
+
+  // Fetch dependency list with installed status from backend
+  const fetchDeps = useCallback(async () => {
+    try {
+      const result: DependencyItem[] = await invoke("get_dependency_list", { config });
+      setDeps(result);
+    } catch (err) {
+      console.error("Failed to fetch dependency list:", err);
+    }
+  }, [config]);
+
+  // Load deps on mount and when config changes
+  useEffect(() => {
+    fetchDeps();
+  }, [fetchDeps]);
+
+  // Refresh deps list when installation completes
+  useEffect(() => {
+    if (progress.status === "completed" || progress.status === "error") {
+      fetchDeps();
+    }
+  }, [progress.status, fetchDeps]);
 
   function getFilteredDeps() {
     switch (filter) {
@@ -141,10 +163,16 @@ export default function Dependencies() {
       )}
 
       {/* Progress completed banner */}
-      {progress.status === "completed" && (
+      {progress.status === "completed" && !progress.error_message && (
         <div className="flex items-center gap-2 rounded-lg border border-neon-green/20 bg-neon-green/5 px-4 py-2.5 text-sm text-neon-green">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           所有依赖已成功安装完成！
+        </div>
+      )}
+      {progress.status === "completed" && progress.error_message && (
+        <div className="flex items-center gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-2.5 text-sm text-yellow-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {progress.error_message}
         </div>
       )}
       {progress.status === "error" && (

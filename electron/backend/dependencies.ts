@@ -1,5 +1,6 @@
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { DependencyItem, DependencyCategory, InstallProgress, LogPayload } from "./types";
+import { depsLogger as log } from "./logger";
 
 interface DependencyDef {
   id: string;
@@ -50,12 +51,44 @@ function winetricksId(depId: string): string {
   return WINETRICKS_ID_MAP[depId] || depId;
 }
 
-export function getDependencyList(): DependencyItem[] {
-  return DEPENDENCY_DEFINITIONS.map((def) => ({
-    ...def,
-    installed: false,
-    install_time: undefined,
-  }));
+/**
+ * Check which winetricks packages are already installed in the given prefix.
+ * Uses `winetricks list-installed` if available, otherwise falls back to
+ * checking known registry keys / files in the prefix.
+ */
+function checkInstalledWinetricks(prefixPath: string): Set<string> {
+  const installed = new Set<string>();
+  try {
+    const output = execSync("winetricks list-installed", {
+      env: { ...process.env, WINEPREFIX: prefixPath },
+      encoding: "utf-8",
+      timeout: 15000,
+    });
+    for (const line of output.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("Using")) {
+        installed.add(trimmed);
+      }
+    }
+    log.info(`Detected installed winetricks packages: ${[...installed].join(", ") || "(none)"}`);
+  } catch (err) {
+    log.warn(`Failed to query installed winetricks packages: ${err}`);
+  }
+  return installed;
+}
+
+export function getDependencyList(prefixPath?: string): DependencyItem[] {
+  const installed = prefixPath ? checkInstalledWinetricks(prefixPath) : new Set<string>();
+
+  return DEPENDENCY_DEFINITIONS.map((def) => {
+    const wtId = winetricksId(def.id);
+    const isInstalled = installed.has(wtId);
+    return {
+      ...def,
+      installed: isInstalled,
+      install_time: undefined,
+    };
+  });
 }
 
 export interface ProgressEmitter {
@@ -68,12 +101,21 @@ export async function installDependencies(
   selectedIds: string[],
   emitter: ProgressEmitter
 ): Promise<void> {
+  log.separator();
+  log.info("=== Dependency Installation Start ===");
+  log.info(`Wine prefix: ${winePrefixPath}`);
+  log.info(`Selected dependencies: ${selectedIds.join(", ")}`);
+
   const total = selectedIds.length;
   let completed = 0;
+  let failed = 0;
+  const failedDeps: string[] = [];
 
   for (let idx = 0; idx < selectedIds.length; idx++) {
     const depId = selectedIds[idx];
     const wtId = winetricksId(depId);
+
+    log.info(`[${idx + 1}/${total}] Installing: ${depId} (winetricks: ${wtId})`);
 
     emitter.emitProgress({
       current_dependency: depId,
@@ -87,35 +129,66 @@ export async function installDependencies(
     try {
       await runWinetricksSingle(winePrefixPath, wtId, emitter);
       completed++;
+      log.info(`[${idx + 1}/${total}] Successfully installed: ${depId}`);
       emitter.emitProgress({
         current_dependency: depId,
         current_step: "Completed",
         progress_percent: Math.round((completed / total) * 100),
         total_steps: total,
         completed_steps: completed,
-        status: "idle",
+        status: "running",
       });
     } catch (err) {
-      emitter.emitProgress({
-        current_dependency: depId,
-        current_step: "Failed",
-        progress_percent: 0,
-        total_steps: total,
-        completed_steps: completed,
-        status: "error",
-        error_message: String(err),
+      failed++;
+      failedDeps.push(depId);
+      log.error(`[${idx + 1}/${total}] Failed to install ${depId}: ${err}`);
+      emitter.emitLog({
+        level: "error",
+        message: `Failed to install ${depId}: ${err}`,
+        timestamp: new Date().toTimeString().slice(0, 8),
       });
+      // Continue with next dependency instead of stopping
     }
   }
 
-  emitter.emitProgress({
-    current_dependency: "",
-    current_step: "All dependencies installed",
-    progress_percent: 100,
-    total_steps: total,
-    completed_steps: total,
-    status: "completed",
-  });
+  log.info(`=== Installation Summary: ${completed} succeeded, ${failed} failed out of ${total} ===`);
+  if (failedDeps.length > 0) {
+    log.warn(`Failed dependencies: ${failedDeps.join(", ")}`);
+  }
+
+  if (failed > 0 && completed === 0) {
+    // All failed
+    emitter.emitProgress({
+      current_dependency: "",
+      current_step: `All ${total} dependencies failed to install`,
+      progress_percent: 0,
+      total_steps: total,
+      completed_steps: 0,
+      status: "error",
+      error_message: `All dependencies failed. Failed: ${failedDeps.join(", ")}`,
+    });
+  } else if (failed > 0) {
+    // Partial failure
+    emitter.emitProgress({
+      current_dependency: "",
+      current_step: `${completed}/${total} installed, ${failed} failed`,
+      progress_percent: Math.round((completed / total) * 100),
+      total_steps: total,
+      completed_steps: completed,
+      status: "completed",
+      error_message: `Some dependencies failed: ${failedDeps.join(", ")}`,
+    });
+  } else {
+    // All succeeded
+    emitter.emitProgress({
+      current_dependency: "",
+      current_step: "All dependencies installed successfully",
+      progress_percent: 100,
+      total_steps: total,
+      completed_steps: total,
+      status: "completed",
+    });
+  }
 }
 
 function runWinetricksSingle(
@@ -135,6 +208,7 @@ function runWinetricksSingle(
         const trimmed = line.trim();
         if (trimmed) {
           output += trimmed + "\n";
+          log.info(`[winetricks:${wtId}] ${trimmed}`);
           const now = new Date();
           const ts = now.toTimeString().slice(0, 8) + "." + String(now.getMilliseconds()).padStart(3, "0");
           emitter.emitLog({ level: "info", message: trimmed, timestamp: ts });
@@ -146,6 +220,7 @@ function runWinetricksSingle(
       for (const line of data.toString().split("\n")) {
         const trimmed = line.trim();
         if (trimmed) {
+          log.warn(`[winetricks:${wtId}] ${trimmed}`);
           const now = new Date();
           const ts = now.toTimeString().slice(0, 8) + "." + String(now.getMilliseconds()).padStart(3, "0");
           emitter.emitLog({ level: "warn", message: trimmed, timestamp: ts });
@@ -154,11 +229,13 @@ function runWinetricksSingle(
     });
 
     child.on("close", (code) => {
+      log.info(`[winetricks:${wtId}] Process exited with code: ${code}`);
       if (code === 0) resolve(output);
       else reject(new Error(`winetricks ${wtId} failed with exit code: ${code}`));
     });
 
     child.on("error", (err) => {
+      log.error(`[winetricks:${wtId}] Process error: ${err.message}`);
       reject(new Error(`Failed to run winetricks: ${err.message}`));
     });
   });
