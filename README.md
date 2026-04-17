@@ -14,8 +14,8 @@
 ## 技术栈
 
 - **前端**: React 18 + TypeScript + TailwindCSS
-- **后端**: Tauri v2 (Rust)
-- **构建工具**: Vite 5 + Cargo
+- **后端**: Electron + Node.js (TypeScript)
+- **构建工具**: Vite 5 + electron-builder
 
 ---
 
@@ -71,15 +71,16 @@ chmod +x install.sh
 
 ---
 
-### 方式三：Windows 本地开发（仅调试 UI）
+### 方式三：本地开发
 
 ```bash
-# 需要先安装 Node.js 和 Rust
+# 需要先安装 Node.js
 pnpm install
-pnpm tauri dev
+pnpm dev          # 启动 Vite 前端开发服务器
+pnpm electron:dev # 启动 Electron 主进程（开发模式）
 ```
 
-> Wine/Proton 相关功能无法在 Windows 上运行，仅可调试界面。
+> Wine/Proton 相关功能仅在 Linux 上可用，其他平台仅可调试界面。
 
 ---
 
@@ -97,22 +98,25 @@ pnpm tauri dev
 ```
 DeckyWeGame/
 ├── .github/workflows/  # GitHub Actions 自动构建配置
-├── src-tauri/src/       # Rust 后端
-│   ├── main.rs          # 应用入口
-│   ├── commands.rs      # IPC 命令定义
-│   ├── config.rs        # 配置文件管理
-│   ├── environment.rs   # Wine Prefix 操作
-│   ├── proton.rs        # Proton 版本检测
-│   ├── dependencies.rs  # winetricks 依赖安装
-│   ├── launcher.rs      # 进程启停管理
-│   └── steam.rs         # Steam 快捷方式生成
+├── electron/            # Electron 主进程 (Node.js/TypeScript)
+│   ├── main.ts          # 应用入口
+│   ├── preload.ts       # 预加载脚本 (contextBridge)
+│   ├── ipc.ts           # IPC 命令处理器
+│   └── backend/         # 后端逻辑模块
+│       ├── config.ts        # 配置文件管理
+│       ├── environment.ts   # Wine Prefix 操作
+│       ├── proton.ts        # Proton 版本检测
+│       ├── dependencies.ts  # winetricks 依赖安装
+│       ├── launcher.ts      # 进程启停管理
+│       ├── steam.ts         # Steam 快捷方式生成
+│       └── types.ts         # 类型定义
 ├── src/                 # React 前端
 │   ├── pages/           # 页面组件
 │   ├── components/      # 可复用 UI 组件
 │   ├── hooks/           # 自定义 Hooks
-│   └── utils/           # 常量和辅助函数
+│   └── utils/           # 常量、辅助函数和 API 桥接层
 ├── install.sh           # SteamOS 源码构建脚本
-└── package.json         # 前端依赖配置
+└── package.json         # 依赖配置
 ```
 
 ## License

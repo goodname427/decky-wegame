@@ -46,7 +46,9 @@ EOFM
     rm -rf "$HOME/.cargo"
     rm -rf "$HOME/.rustup"
     rm -rf "$SCRIPT_DIR/node_modules"
-    rm -rf "$SCRIPT_DIR/src-tauri/target"
+    rm -rf "$SCRIPT_DIR/dist"
+    rm -rf "$SCRIPT_DIR/dist-electron"
+    rm -rf "$SCRIPT_DIR/release"
     rm -rf "$HOME/tmp"
     rm -f "$HOME/Desktop/wegame-launcher.desktop"
 
@@ -179,16 +181,15 @@ restore_mirror() {
 install_system_deps() {
     log_step "安装系统依赖"
     local deps=(
-        webkit2gtk-4.1
-        libappindicator-gtk3
-        librsvg
-        gtk3
-        openssl
-        pkg-config
-        patchelf
-        file
         git
         base-devel
+        libxss
+        nss
+        libnotify
+        libxtst
+        xdg-utils
+        libsecret
+        fuse2
     )
 
     log_info "即将安装: ${deps[*]}"
@@ -210,23 +211,7 @@ install_system_deps() {
     exit 1
 }
 
-# 安装 Rust
-install_rust() {
-    log_step "安装 Rust 工具链"
-    if command -v rustc &>/dev/null; then
-        local rust_ver
-        rust_ver=$(rustc --version 2>/dev/null || echo "未知")
-        log_success "Rust 已安装: $rust_ver"
-        # 更新到最新稳定版
-        log_info "更新 Rust 到最新版本..."
-        rustup update stable
-    else
-        log_info "正在下载并安装 Rust..."
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        source "$HOME/.cargo/env"
-        log_success "Rust 安装完成: $(rustc --version)"
-    fi
-}
+
 
 # 安装 Node.js（含 npm）
 install_node() {
@@ -298,13 +283,17 @@ build_project() {
     log_info "安装前端依赖 (pnpm install)..."
     pnpm install
 
-    # 构建 Tauri 应用
-    log_info "正在编译（首次构建可能需要 5-15 分钟）..."
-    pnpm tauri build
+    # 构建 Electron 主进程
+    log_info "编译 Electron 主进程..."
+    pnpm run build:electron
+
+    # 打包 AppImage
+    log_info "正在打包 AppImage..."
+    pnpm exec electron-builder --linux AppImage
 
     # 找到产物
     local appimage
-    appimage=$(find src-tauri/target/release/bundle/appimage/ -name "*.AppImage" 2>/dev/null | head -1)
+    appimage=$(find release/ -name "*.AppImage" 2>/dev/null | head -1)
 
     if [ -n "$appimage" ] && [ -f "$appimage" ]; then
         log_success "构建成功！"
@@ -404,15 +393,13 @@ EOFM
     log_info "清理 home 分区中的 npm 全局包..."
     rm -rf "$HOME/.npm-global"
 
-    # 8. 删除 Rust 工具链和缓存
-    log_info "清理 Rust 工具链和缓存..."
-    rm -rf "$HOME/.cargo"
-    rm -rf "$HOME/.rustup"
-
-    # 9. 删除项目构建产物
+    # 8. 删除项目构建产物
     log_info "清理项目构建产物..."
     rm -rf "$SCRIPT_DIR/node_modules"
-    rm -rf "$SCRIPT_DIR/src-tauri/target"
+    rm -rf "$SCRIPT_DIR/dist"
+    rm -rf "$SCRIPT_DIR/dist-electron"
+    rm -rf "$SCRIPT_DIR/release"    rm -rf "$SCRIPT_DIR/dist-electron"
+    rm -rf "$SCRIPT_DIR/release"
 
     # 10. 删除 home 下的临时构建目录
     rm -rf "$HOME/tmp"
@@ -435,8 +422,7 @@ EOFM
     echo -e "${YELLOW}已清理的内容：${NC}"
     echo -e "  - pacman 缓存 (/var/cache/pacman/pkg/)"
     echo -e "  - npm 全局包 (pnpm)"
-    echo -e "  - Rust 工具链和缓存 (~/.cargo, ~/.rustup)"
-    echo -e "  - 项目构建产物 (node_modules, target)"
+    echo -e "  - 项目构建产物 (node_modules, dist, dist-electron, release)"
     echo -e "  - 桌面快捷方式"
     echo -e "  - 镜像源备份文件"
     echo ""
@@ -477,7 +463,6 @@ main() {
     disable_readonly
     restore_mirror
     install_system_deps
-    install_rust
     install_node
     install_pnpm
     install_winetricks

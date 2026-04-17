@@ -1,0 +1,49 @@
+appId: com.decky.wegame
+productName: WeGame Launcher
+copyright: Copyright © 2024
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!node_modules"
+  - "!electron"
+  - "!src"
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Game
+  icon: public/wegame-icon.svg
+  synopsis: WeGame Launcher for Steam Deck
+  description: A tool to run Tencent WeGame on Steam Deck via Proton/Wine
+  desktop:
+    Name: WeGame Launcher
+    Comment: Run WeGame on Steam Deck
+    Categories: Game;Utility;
+    StartupWMClass: decky-wegame
+
+appImage:
+  artifactName: "WeGame-Launcher-${version}-${arch}.AppImage"
+  license: LICENSE
+
+deb:
+  artifactName: "WeGame-Launcher-${version}-${arch}.deb"
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/api";
 import { ChevronLeft, ChevronRight, Check, Zap, Rocket } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";

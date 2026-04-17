@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../utils/api";
 import type { InstallProgress } from "../types";
 
 const DEFAULT_PROGRESS: InstallProgress = {
@@ -16,20 +16,20 @@ export function useInstallProgress() {
   const [logs, setLogs] = useState<Array<{ level: string; message: string; timestamp: string }>>([]);
 
   useEffect(() => {
-    const unlisten1 = listen<InstallProgress>("install-progress", (event) => {
-      setProgress(event.payload);
+    const unlisten1 = listen<InstallProgress>("install-progress", (payload) => {
+      setProgress(payload);
     });
 
     const unlisten2 = listen<{ level: string; message: string; timestamp: string }>(
       "log-event",
-      (event) => {
-        setLogs((prev) => [...prev.slice(-500), event.payload]);
+      (payload) => {
+        setLogs((prev) => [...prev.slice(-500), payload]);
       }
     );
 
     return () => {
-      unlisten1.then((fn) => fn());
-      unlisten2.then((fn) => fn());
+      unlisten1();
+      unlisten2();
     };
   }, []);
 

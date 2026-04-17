@@ -1,0 +1,152 @@
+import { IpcMain, BrowserWindow } from "electron";
+import { loadConfig, saveConfig } from "./backend/config";
+import { createPrefix, deletePrefix, prefixExists, getPrefixSizeMb, getPrefixPath } from "./backend/environment";
+import { scanProtonVersions, validateProtonPath, checkWinetricksAvailable } from "./backend/proton";
+import { launchWegame, stopWegame, checkWegameStatus } from "./backend/launcher";
+import { generateDesktopEntry, addToSteam, listWegameGames } from "./backend/steam";
+import { getDependencyList, installDependencies } from "./backend/dependencies";
+import { EnvironmentConfig, GameEntry } from "./backend/types";
+import os from "os";
+import fs from "fs";
+import { execSync } from "child_process";
+
+let installing = false;
+
+function getMainWindow(): BrowserWindow | null {
+  const windows = BrowserWindow.getAllWindows();
+  return windows.length > 0 ? windows[0] : null;
+}
+
+export function registerIpcHandlers(ipcMain: IpcMain): void {
+  // Config
+  ipcMain.handle("get_config", async () => {
+    return loadConfig();
+  });
+
+  ipcMain.handle("save_config_cmd", async (_event, args: { config: EnvironmentConfig }) => {
+    saveConfig(args.config);
+  });
+
+  // Environment
+  ipcMain.handle("init_environment", async (_event, args: { config: EnvironmentConfig }) => {
+    saveConfig(args.config);
+    return await createPrefix(args.config);
+  });
+
+  ipcMain.handle("reset_environment", async (_event, args: { config: EnvironmentConfig }) => {
+    return await deletePrefix(args.config);
+  });
+
+  ipcMain.handle("get_prefix_info", async (_event, args: { config: EnvironmentConfig }) => {
+    const exists = prefixExists(args.config);
+    const size_mb = getPrefixSizeMb(args.config);
+    const path = getPrefixPath(args.config);
+    return { exists, size_mb, path };
+  });
+
+  // Proton
+  ipcMain.handle("get_proton_versions", async () => {
+    return scanProtonVersions();
+  });
+
+  ipcMain.handle("validate_proton_path_cmd", async (_event, args: { path: string }) => {
+    return validateProtonPath(args.path);
+  });
+
+  // Dependencies
+  ipcMain.handle("get_dependency_list", async () => {
+    return getDependencyList();
+  });
+
+  ipcMain.handle("start_install_dependencies", async (_event, args: { config: EnvironmentConfig; selectedIds: string[] }) => {
+    if (installing) {
+      throw new Error("Installation already in progress");
+    }
+    installing = true;
+
+    const prefixPath = getPrefixPath(args.config);
+    const win = getMainWindow();
+
+    try {
+      await installDependencies(prefixPath, args.selectedIds, {
+        emitProgress: (progress) => {
+          win?.webContents.send("install-progress", progress);
+        },
+        emitLog: (log) => {
+          win?.webContents.send("log-event", log);
+        },
+      });
+    } finally {
+      installing = false;
+    }
+  });
+
+  // Launcher
+  ipcMain.handle("launch_wegame_cmd", async (_event, args: { config: EnvironmentConfig }) => {
+    return await launchWegame(args.config);
+  });
+
+  ipcMain.handle("stop_wegame_cmd", async () => {
+    return await stopWegame();
+  });
+
+  ipcMain.handle("get_wegame_status_cmd", async () => {
+    return checkWegameStatus();
+  });
+
+  // Games / Steam
+  ipcMain.handle("scan_games", async (_event, args: { config: EnvironmentConfig }) => {
+    return listWegameGames(args.config);
+  });
+
+  ipcMain.handle("add_game_to_steam", async (_event, args: { game: GameEntry; config: EnvironmentConfig }) => {
+    const desktopPath = generateDesktopEntry(args.game, args.config);
+    return addToSteam(args.game, desktopPath);
+  });
+
+  // System info
+  ipcMain.handle("get_system_info", async () => {
+    const osVersion = getOsVersion();
+    const architecture = os.arch();
+    const { totalDiskGb, freeDiskGb } = getDiskInfo();
+    const protonVersions = scanProtonVersions();
+    const winetricksAvailable = checkWinetricksAvailable();
+
+    return {
+      os_version: osVersion,
+      architecture,
+      total_disk_gb: totalDiskGb,
+      free_disk_gb: freeDiskGb,
+      proton_versions: protonVersions,
+      winetricks_available: winetricksAvailable,
+    };
+  });
+}
+
+function getOsVersion(): string {
+  try {
+    const content = fs.readFileSync("/etc/os-release", "utf-8");
+    const match = content.match(/PRETTY_NAME="?([^"\n]+)"?/);
+    return match ? match[1] : "Unknown Linux";
+  } catch {
+    return "Unknown Linux";
+  }
+}
+
+function getDiskInfo(): { totalDiskGb: number; freeDiskGb: number } {
+  try {
+    const home = os.homedir();
+    const output = execSync(`df -k --output=size,avail "${home}"`, { encoding: "utf-8" });
+    const lines = output.trim().split("\n");
+    if (lines.length >= 2) {
+      const parts = lines[1].trim().split(/\s+/).map(Number);
+      if (parts.length >= 2) {
+        const kbToGb = 1024 * 1024;
+        return { totalDiskGb: parts[0] / kbToGb, freeDiskGb: parts[1] / kbToGb };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { totalDiskGb: 0, freeDiskGb: 0 };
+}

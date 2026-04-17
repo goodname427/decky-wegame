@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/api";
 import {
   Settings2,
   PackageCheck,

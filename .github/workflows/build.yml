@@ -11,55 +11,51 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential curl wget file \
-            libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev \
-            libappindicator3-dev libssl-dev pkg-config \
-            libxdo-dev libdbus-glib-1-dev \
-            libfuse2 appstream
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2
+
       - name: Install pnpm
         run: npm install -g pnpm
 
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: pnpm install
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+      - name: Build frontend
+        run: pnpm run build
 
-      - name: Build Tauri app
+      - name: Build Electron main process
+        run: pnpm run build:electron
+
+      - name: Build AppImage
+        run: pnpm exec electron-builder --linux AppImage
         env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "true"
-        run: |
-          pnpm tauri build --bundles deb,appimage --verbose
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload deb
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: WeGame-Launcher-deb
-          path: src-tauri/target/release/bundle/deb/*.deb
+      - name: Build deb
+        run: pnpm exec electron-builder --linux deb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: WeGame-Launcher-AppImage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          path: release/*.AppImage
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: WeGame-Launcher-deb
+          path: release/*.deb

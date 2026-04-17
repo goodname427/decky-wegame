@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/api";
 import type { WeGameStatus } from "../types";
 
 export function useWegameStatus(pollInterval = 3000) {
