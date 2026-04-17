@@ -145,3 +145,15 @@
   - `src/pages/Dependencies.tsx`：添加跳过功能界面
   - `electron/ipc.ts`：添加新 IPC 接口
   - `src/utils/api.ts`：添加新 API 方法
+
+## 2026-04-18 — 修复依赖安装无响应问题
+
+- **问题**：依赖安装过程中软件直接无响应，卡在winetricks安装步骤
+- **根本原因**：`installWinetricks()` 函数使用 `execSync()` 同步执行需要管理员权限的命令（`sudo mv`），导致进程阻塞等待用户输入密码，UI线程被挂起
+- **解决方案**：
+  - 将 `installWinetricks()` 改为异步函数，使用 `spawn()` 替代 `execSync()`
+  - 添加超时机制（60秒），防止进程无限期等待
+  - 改进错误处理，提供更清晰的错误信息
+  - 在IPC层正确处理异步操作，避免阻塞主线程
+- **修改文件**：`electron/backend/dependencies.ts`
+- **效果**：依赖安装过程不再阻塞UI，用户可以正常使用软件界面，安装失败时有明确的错误提示

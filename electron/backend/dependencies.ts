@@ -111,19 +111,54 @@ function isWinetricksAvailable(): boolean {
 /**
  * Install winetricks if not available
  */
-function installWinetricks(): void {
+async function installWinetricks(): Promise<void> {
   log.info("Installing winetricks...");
-  try {
-    execSync("curl -sSL https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o /tmp/winetricks", {
-      encoding: "utf-8"
+  
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", ["-c", `
+      curl -sSL https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o /tmp/winetricks &&
+      chmod +x /tmp/winetricks &&
+      sudo mv /tmp/winetricks /usr/local/bin/winetricks
+    `], {
+      stdio: ['ignore', 'pipe', 'pipe']
     });
-    execSync("chmod +x /tmp/winetricks", { encoding: "utf-8" });
-    execSync("sudo mv /tmp/winetricks /usr/local/bin/winetricks", { encoding: "utf-8" });
-    log.info("Winetricks installed successfully");
-  } catch (err) {
-    log.error(`Failed to install winetricks: ${err}`);
-    throw new Error("Failed to install winetricks. Please install it manually: sudo pacman -S winetricks");
-  }
+
+    let output = "";
+    let errorOutput = "";
+
+    child.stdout?.on("data", (data: Buffer) => {
+      output += data.toString();
+    });
+
+    child.stderr?.on("data", (data: Buffer) => {
+      errorOutput += data.toString();
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        log.info("Winetricks installed successfully");
+        resolve();
+      } else {
+        const errorMsg = `Failed to install winetricks (exit code: ${code}). Error: ${errorOutput}`;
+        log.error(errorMsg);
+        reject(new Error("Failed to install winetricks. Please install it manually: sudo pacman -S winetricks"));
+      }
+    });
+
+    child.on("error", (err) => {
+      log.error(`Failed to run winetricks installation: ${err.message}`);
+      reject(new Error(`Failed to run winetricks installation: ${err.message}`));
+    });
+
+    // Set timeout to prevent hanging
+    setTimeout(() => {
+      if (child.exitCode === null) {
+        child.kill();
+        log.error("Winetricks installation timed out");
+        reject(new Error("Winetricks installation timed out. Please install it manually: sudo pacman -S winetricks"));
+      }
+    }, 60000); // 60 seconds timeout
+  });
 }
 
 export async function installDependencies(
@@ -149,7 +184,7 @@ export async function installDependencies(
     });
     
     try {
-      installWinetricks();
+      await installWinetricks();
       emitter.emitProgress({
         current_dependency: "winetricks",
         current_step: "Winetricks installed successfully",
