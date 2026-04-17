@@ -23,18 +23,30 @@ jobs:
 
       - name: Fix gdk-pixbuf loaders for AppImage
         run: |
-          # Ensure gdk-pixbuf loaders directory exists and cache is generated
-          GDK_PIXBUF_DIR=$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders")
-          GDK_PIXBUF_BASE=$(dirname "$GDK_PIXBUF_DIR")
-          echo "gdk-pixbuf module dir: $GDK_PIXBUF_DIR"
-          echo "gdk-pixbuf base dir: $GDK_PIXBUF_BASE"
-          ls -la "$GDK_PIXBUF_BASE" 2>/dev/null || echo "Base dir does not exist"
-          ls -la "$GDK_PIXBUF_DIR" 2>/dev/null || echo "Module dir does not exist"
-          # Create the expected directory structure if it doesn't exist
-          mkdir -p /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders
-          # Update the loaders cache
+          # Debug: find where gdk-pixbuf loaders are actually installed
+          echo "=== Searching for gdk-pixbuf loaders ==="
+          find / -path "*/gdk-pixbuf-2.0/*/loaders" -type d 2>/dev/null || true
+          find / -name "libpixbufloader-png.so" 2>/dev/null || true
+          echo "=== pkg-config info ==="
+          pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null || echo "pkg-config failed"
+          pkg-config --variable=gdk_pixbuf_cache_file gdk-pixbuf-2.0 2>/dev/null || echo "no cache file var"
+          echo "=== pacman files for gdk-pixbuf2 ==="
+          pacman -Ql gdk-pixbuf2 | grep -E "(loaders|\.so)" | head -20
+          echo "=== Checking expected path ==="
+          ls -la /usr/lib/gdk-pixbuf-2.0/ 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/ does not exist"
+          # Get the actual module dir from pkg-config
+          ACTUAL_DIR=$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null)
+          EXPECTED_DIR="/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
+          if [ -n "$ACTUAL_DIR" ] && [ "$ACTUAL_DIR" != "$EXPECTED_DIR" ]; then
+            echo "Actual dir ($ACTUAL_DIR) differs from expected ($EXPECTED_DIR), creating symlink"
+            mkdir -p "$(dirname "$EXPECTED_DIR")"
+            ln -sf "$(dirname "$ACTUAL_DIR")" "/usr/lib/gdk-pixbuf-2.0/2.10.0" || true
+          fi
+          # Ensure loaders cache is up to date
           gdk-pixbuf-query-loaders --update-cache || true
-          ls -la /usr/lib/gdk-pixbuf-2.0/2.10.0/
+          echo "=== Final check ==="
+          ls -la /usr/lib/gdk-pixbuf-2.0/2.10.0/ 2>/dev/null || echo "STILL NOT FOUND"
+          ls -la /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders/ 2>/dev/null | head -5 || echo "loaders dir not found"
 
       - name: Checkout
         uses: actions/checkout@v4
