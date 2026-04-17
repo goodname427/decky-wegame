@@ -23,30 +23,30 @@ jobs:
 
       - name: Fix gdk-pixbuf loaders for AppImage
         run: |
-          # Debug: find where gdk-pixbuf loaders are actually installed
-          echo "=== Searching for gdk-pixbuf loaders ==="
-          find / -path "*/gdk-pixbuf-2.0/*/loaders" -type d 2>/dev/null || true
-          find / -name "libpixbufloader-png.so" 2>/dev/null || true
-          echo "=== pkg-config info ==="
-          pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null || echo "pkg-config failed"
-          pkg-config --variable=gdk_pixbuf_cache_file gdk-pixbuf-2.0 2>/dev/null || echo "no cache file var"
-          echo "=== pacman files for gdk-pixbuf2 ==="
-          pacman -Ql gdk-pixbuf2 | grep -E "(loaders|\.so)" | head -20
-          echo "=== Checking expected path ==="
-          ls -la /usr/lib/gdk-pixbuf-2.0/ 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/ does not exist"
-          # Get the actual module dir from pkg-config
-          ACTUAL_DIR=$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null)
-          EXPECTED_DIR="/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
-          if [ -n "$ACTUAL_DIR" ] && [ "$ACTUAL_DIR" != "$EXPECTED_DIR" ]; then
-            echo "Actual dir ($ACTUAL_DIR) differs from expected ($EXPECTED_DIR), creating symlink"
-            mkdir -p "$(dirname "$EXPECTED_DIR")"
-            ln -sf "$(dirname "$ACTUAL_DIR")" "/usr/lib/gdk-pixbuf-2.0/2.10.0" || true
+          # New gdk-pixbuf2 (2.44+) on Arch uses glycin and no longer installs
+          # loaders into /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders/.
+          # linuxdeploy-plugin-gtk still expects this directory structure.
+          # Create it and generate the loaders.cache file.
+          GDK_BINARY_DIR=$(pkg-config --variable=gdk_pixbuf_binarydir gdk-pixbuf-2.0 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/2.10.0")
+          GDK_CACHE_FILE=$(pkg-config --variable=gdk_pixbuf_cache_file gdk-pixbuf-2.0 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache")
+          GDK_MODULE_DIR=$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0 2>/dev/null || echo "/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders")
+          echo "gdk_pixbuf_binarydir: $GDK_BINARY_DIR"
+          echo "gdk_pixbuf_cache_file: $GDK_CACHE_FILE"
+          echo "gdk_pixbuf_moduledir: $GDK_MODULE_DIR"
+          # Create the expected directory structure
+          mkdir -p "$GDK_BINARY_DIR"
+          mkdir -p "$GDK_MODULE_DIR"
+          # Generate loaders.cache (will be empty/minimal if no loaders exist)
+          gdk-pixbuf-query-loaders --update-cache 2>/dev/null || true
+          # If the cache file still doesn't exist, create a minimal one
+          if [ ! -f "$GDK_CACHE_FILE" ]; then
+            echo "Creating minimal loaders.cache at $GDK_CACHE_FILE"
+            gdk-pixbuf-query-loaders > "$GDK_CACHE_FILE" 2>/dev/null || touch "$GDK_CACHE_FILE"
           fi
-          # Ensure loaders cache is up to date
-          gdk-pixbuf-query-loaders --update-cache || true
-          echo "=== Final check ==="
-          ls -la /usr/lib/gdk-pixbuf-2.0/2.10.0/ 2>/dev/null || echo "STILL NOT FOUND"
-          ls -la /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders/ 2>/dev/null | head -5 || echo "loaders dir not found"
+          echo "=== Verification ==="
+          ls -la "$GDK_BINARY_DIR"/
+          ls -la "$GDK_MODULE_DIR"/ 2>/dev/null || echo "(empty loaders dir - expected for gdk-pixbuf 2.44+)"
+          cat "$GDK_CACHE_FILE" 2>/dev/null | head -5 || echo "cache file missing"
 
       - name: Checkout
         uses: actions/checkout@v4
