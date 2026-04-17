@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { PackageCheck, Settings as SettingsIcon, Settings2 } from "lucide-react";
+import { PackageCheck, Settings as SettingsIcon, Download, Settings2 } from "lucide-react";
 import Dependencies from "./Dependencies";
 import Settings from "./Settings";
+import UpdateChecker from "./UpdateChecker";
 
-type SubTab = "dependencies" | "advanced";
+type SubTab = "dependencies" | "advanced" | "update";
 
 interface SettingsPageProps {
   onOpenSetupWizard?: () => void;
@@ -15,6 +16,7 @@ export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
   const tabs: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: "dependencies", label: "依赖管理", icon: PackageCheck },
     { id: "advanced", label: "高级配置", icon: SettingsIcon },
+    { id: "update", label: "版本更新", icon: Download },
   ];
 
   return (
@@ -53,6 +55,7 @@ export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
       <div className="animate-fade-in">
         {activeTab === "dependencies" && <Dependencies />}
         {activeTab === "advanced" && <Settings />}
+        {activeTab === "update" && <UpdateChecker />}
       </div>
     </div>
   );

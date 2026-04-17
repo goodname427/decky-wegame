@@ -107,3 +107,16 @@ export function checkWinetricksAvailable(): boolean {
     return false;
   }
 }
+
+export function checkWineAvailable(): boolean {
+  const candidates = ["wine64", "wine"];
+  for (const cmd of candidates) {
+    try {
+      execSync(`which ${cmd}`, { encoding: "utf-8" });
+      return true;
+    } catch {
+      // continue
+    }
+  }
+  return false;
+}

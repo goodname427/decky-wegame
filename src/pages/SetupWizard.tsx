@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "../utils/api";
-import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import useInstallProgress from "../hooks/useInstallProgress";
@@ -9,10 +9,11 @@ import type { EnvironmentConfig, DependencyCategory } from "../types";
 import { DEPENDENCY_LIST } from "../utils/constants";
 
 const STEPS = [
-  { id: 1, title: "选择 Proton", icon: Cpu },
-  { id: 2, title: "配置路径", icon: FolderCog },
-  { id: 3, title: "确认依赖", icon: ListChecks },
-  { id: 4, title: "执行安装", icon: Rocket },
+  { id: 1, title: "环境检查", icon: ShieldCheck },
+  { id: 2, title: "选择 Proton", icon: Cpu },
+  { id: 3, title: "配置路径", icon: FolderCog },
+  { id: 4, title: "确认依赖", icon: ListChecks },
+  { id: 5, title: "执行安装", icon: Rocket },
 ];
 
 function Cpu({ className }: { className?: string }) {
@@ -27,6 +28,9 @@ function ListChecks({ className }: { className?: string }) {
 function RocketIcon({ className }: { className?: string }) {
   return <Rocket className={className || ""} />;
 }
+function ShieldCheck({ className }: { className?: string }) {
+  return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>;
+}
 
 interface SetupWizardProps {
   open: boolean;
@@ -38,6 +42,11 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [localConfig, setLocalConfig] = useState<EnvironmentConfig | null>(null);
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
   const [installing, setInstalling] = useState(false);
+  const [envCheck, setEnvCheck] = useState<{
+    checking: boolean;
+    winetricks: boolean | null;
+    wine: boolean | null;
+  }>({ checking: false, winetricks: null, wine: null });
 
   const { versions: protonVersions, loading: protonLoading } = useProtonVersions();
   const { config, systemInfo, saveEnvironment } = useEnvironment();
@@ -49,6 +58,30 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     initializedRef[1](true);
     setLocalConfig(config);
     setSelectedDeps(DEPENDENCY_LIST.filter((d) => d.required).map((d) => d.id));
+  }
+
+  // Run environment check when wizard opens
+  useEffect(() => {
+    if (open && envCheck.winetricks === null && !envCheck.checking) {
+      runEnvCheck();
+    }
+  }, [open]);
+
+  async function runEnvCheck() {
+    setEnvCheck({ checking: true, winetricks: null, wine: null });
+    try {
+      const info = (await invoke("get_system_info")) as {
+        winetricks_available: boolean;
+        wine_available?: boolean;
+      };
+      setEnvCheck({
+        checking: false,
+        winetricks: info.winetricks_available,
+        wine: info.wine_available ?? false,
+      });
+    } catch {
+      setEnvCheck({ checking: false, winetricks: false, wine: false });
+    }
   }
 
   if (!open || !localConfig) return null;
@@ -78,9 +111,10 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
 
   function canProceed() {
     switch (currentStep) {
-      case 1: return true; // Proton auto-selects if none chosen
-      case 2: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
-      case 3: return selectedDeps.length > 0;
+      case 1: return envCheck.winetricks === true && envCheck.wine === true;
+      case 2: return true; // Proton auto-selects if none chosen
+      case 3: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
+      case 4: return selectedDeps.length > 0;
       default: return true;
     }
   }
@@ -146,6 +180,116 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       {/* Step Content */}
       <div className="glass-card p-6 animate-fade-in min-h-[320px]">
         {currentStep === 1 && (
+          <div className="space-y-5">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-gray-100">环境检查</h3>
+              <p className="mt-1 text-sm text-gray-400">检测系统中是否已安装必要的工具。winetricks 和 Wine 是安装依赖的前置条件。</p>
+            </div>
+
+            {envCheck.checking ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                <span className="text-sm text-gray-400">正在检测系统环境...</span>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Wine check */}
+                <div className={`flex items-start gap-3 rounded-lg border p-4 ${
+                  envCheck.wine === true
+                    ? "border-neon-green/20 bg-neon-green/5"
+                    : envCheck.wine === false
+                      ? "border-neon-red/20 bg-neon-red/5"
+                      : "border-white/10 bg-white/5"
+                }`}>
+                  <div className="mt-0.5">
+                    {envCheck.wine === true ? (
+                      <CheckCircle className="h-5 w-5 text-neon-green" />
+                    ) : envCheck.wine === false ? (
+                      <XCircle className="h-5 w-5 text-neon-red" />
+                    ) : null}
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-gray-200">Wine</h4>
+                    {envCheck.wine === true ? (
+                      <p className="mt-0.5 text-xs text-gray-400">Wine 已安装 ✓</p>
+                    ) : envCheck.wine === false ? (
+                      <div className="mt-1 space-y-2">
+                        <p className="text-xs text-gray-400">未检测到 Wine。Wine 通常由 Proton 提供，请确保已安装 GE-Proton。</p>
+                        <div className="rounded bg-surface-dark/80 p-2.5 text-xs text-gray-400 font-mono">
+                          <p className="text-gray-500 mb-1"># 如果使用 Flatpak 版 Steam，Wine 通常已内置</p>
+                          <p className="text-gray-500"># 否则可手动安装：</p>
+                          <p>sudo pacman -S wine <span className="text-gray-600"># Arch/SteamOS</span></p>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Winetricks check */}
+                <div className={`flex items-start gap-3 rounded-lg border p-4 ${
+                  envCheck.winetricks === true
+                    ? "border-neon-green/20 bg-neon-green/5"
+                    : envCheck.winetricks === false
+                      ? "border-neon-red/20 bg-neon-red/5"
+                      : "border-white/10 bg-white/5"
+                }`}>
+                  <div className="mt-0.5">
+                    {envCheck.winetricks === true ? (
+                      <CheckCircle className="h-5 w-5 text-neon-green" />
+                    ) : envCheck.winetricks === false ? (
+                      <XCircle className="h-5 w-5 text-neon-red" />
+                    ) : null}
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-gray-200">winetricks</h4>
+                    {envCheck.winetricks === true ? (
+                      <p className="mt-0.5 text-xs text-gray-400">winetricks 已安装 ✓</p>
+                    ) : envCheck.winetricks === false ? (
+                      <div className="mt-1 space-y-2">
+                        <p className="text-xs text-gray-400">
+                          未检测到 winetricks。winetricks 是安装 Windows 运行时依赖（如 .NET、VC++）的必要工具。
+                        </p>
+                        <div className="rounded bg-surface-dark/80 p-2.5 text-xs text-gray-400 font-mono space-y-1">
+                          <p className="text-gray-500"># SteamOS / Arch Linux（需先解锁只读文件系统）：</p>
+                          <p>sudo steamos-readonly disable</p>
+                          <p>sudo pacman -Sy winetricks</p>
+                          <p>sudo steamos-readonly enable</p>
+                          <p className="text-gray-500 mt-2"># 或者直接下载脚本（无需 root）：</p>
+                          <p>mkdir -p ~/.local/bin</p>
+                          <p>curl -L https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o ~/.local/bin/winetricks</p>
+                          <p>chmod +x ~/.local/bin/winetricks</p>
+                          <p className="text-gray-500"># 确保 ~/.local/bin 在 PATH 中</p>
+                          <p>export PATH="$HOME/.local/bin:$PATH"</p>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Warning if not all passed */}
+                {(envCheck.winetricks === false || envCheck.wine === false) && (
+                  <div className="flex items-start gap-2 rounded-lg border border-neon-yellow/20 bg-neon-yellow/5 p-3">
+                    <AlertTriangle className="h-4 w-4 text-neon-yellow mt-0.5 shrink-0" />
+                    <p className="text-xs text-gray-300">
+                      请先安装缺失的工具，然后点击「重新检测」。安装完成前无法继续下一步。
+                    </p>
+                  </div>
+                )}
+
+                {/* Re-check button */}
+                <button
+                  onClick={runEnvCheck}
+                  className="neon-secondary flex items-center gap-2 text-sm"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  重新检测
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {currentStep === 2 && (
           <div className="space-y-4">
             <div className="mb-4">
               <h3 className="text-lg font-semibold text-gray-100">选择 Proton 兼容层</h3>
@@ -206,7 +350,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
           </div>
         )}
 
-        {currentStep === 2 && (
+        {currentStep === 3 && (
           <div className="space-y-5">
             <div className="mb-4">
               <h3 className="text-lg font-semibold text-gray-100">配置路径</h3>
@@ -246,7 +390,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
           </div>
         )}
 
-        {currentStep === 3 && (
+        {currentStep === 4 && (
           <div className="space-y-4">
             <div className="mb-4">
               <h3 className="text-lg font-semibold text-gray-100">确认要安装的依赖组件</h3>
@@ -327,7 +471,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
           </div>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 5 && (
           <div className="space-y-5">
             <div className="text-center">
               <h3 className="text-lg font-semibold text-gray-100">开始安装</h3>

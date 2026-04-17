@@ -65,6 +65,8 @@ export interface SystemInfo {
   free_disk_gb: number;
   proton_versions: ProtonInfo[];
   winetricks_available: boolean;
+  wine_available: boolean;
+}
 }
 
 export interface LogPayload {

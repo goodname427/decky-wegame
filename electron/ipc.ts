@@ -1,10 +1,11 @@
 import { IpcMain, BrowserWindow } from "electron";
 import { loadConfig, saveConfig } from "./backend/config";
 import { createPrefix, deletePrefix, prefixExists, getPrefixSizeMb, getPrefixPath } from "./backend/environment";
-import { scanProtonVersions, validateProtonPath, checkWinetricksAvailable } from "./backend/proton";
+import { scanProtonVersions, validateProtonPath, checkWinetricksAvailable, checkWineAvailable } from "./backend/proton";
 import { launchWegame, stopWegame, checkWegameStatus } from "./backend/launcher";
 import { generateDesktopEntry, addToSteam, listWegameGames } from "./backend/steam";
 import { getDependencyList, installDependencies } from "./backend/dependencies";
+import { checkForUpdate, downloadAndInstallUpdate, UpdateChannel } from "./backend/updater";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import os from "os";
 import fs from "fs";
@@ -112,6 +113,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     const { totalDiskGb, freeDiskGb } = getDiskInfo();
     const protonVersions = scanProtonVersions();
     const winetricksAvailable = checkWinetricksAvailable();
+    const wineAvailable = checkWineAvailable();
 
     return {
       os_version: osVersion,
@@ -120,7 +122,20 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       free_disk_gb: freeDiskGb,
       proton_versions: protonVersions,
       winetricks_available: winetricksAvailable,
+      wine_available: wineAvailable,
     };
+  });
+
+  // Update check
+  ipcMain.handle("check_for_update", async (_event, args: { channel: string }) => {
+    return await checkForUpdate(args.channel as UpdateChannel);
+  });
+
+  ipcMain.handle("download_and_install_update", async (_event, args: { downloadUrl: string; fileName: string }) => {
+    const win = getMainWindow();
+    return await downloadAndInstallUpdate(args.downloadUrl, args.fileName, (progress) => {
+      win?.webContents.send("update-download-progress", progress);
+    });
   });
 }
 

@@ -65,6 +65,7 @@ export interface SystemInfo {
   free_disk_gb: number;
   proton_versions: ProtonInfo[];
   winetricks_available: boolean;
+  wine_available?: boolean;
 }
 
 export interface AppConfig {
@@ -73,4 +74,18 @@ export interface AppConfig {
   dependencies: DependencyItem[];
   games: GameEntry[];
   system_info: SystemInfo;
+}
+
+export type UpdateChannel = "stable" | "dev";
+
+export interface UpdateInfo {
+  has_update: boolean;
+  current_version: string;
+  latest_version: string;
+  channel: UpdateChannel;
+  release_notes?: string;
+  download_url?: string;
+  file_name?: string;
+  published_at?: string;
+  html_url?: string;
 }
