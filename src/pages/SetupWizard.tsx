@@ -45,6 +45,8 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [installing, setInstalling] = useState(false);
   const [showSkipConfirm, setShowSkipConfirm] = useState(false);
   const [skippedInstall, setSkippedInstall] = useState(false);
+  const [showGlobalSkipConfirm, setShowGlobalSkipConfirm] = useState(false);
+  const [globalSkipped, setGlobalSkipped] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -169,7 +171,11 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       // Init prefix first
       await invoke("init_environment", { config: localConfig });
       // Install dependencies or skip
-      if (skippedInstall) {
+      if (globalSkipped) {
+        // Skip entire wizard
+        await invoke("skip_dependency_installation", { config: localConfig });
+      } else if (skippedInstall) {
+        // Skip only dependency installation
         await invoke("skip_dependency_installation", { config: localConfig });
       } else {
         // Check if we need sudo permissions for winetricks
@@ -197,8 +203,10 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     setShowPasswordDialog(false);
     
     try {
-      // Start installation with password
-      await startInstallDependencies(localConfig, selectedDeps, password);
+      // First install winetricks with password
+      await invoke("install_winetricks", { password });
+      // Then start dependency installation
+      await startInstallDependencies(localConfig, selectedDeps);
     } catch (err) {
       console.error("Installation failed:", err);
       // Show password dialog again if authentication failed
@@ -214,6 +222,14 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     setSkippedInstall(true);
     // Proceed to next step automatically
     setCurrentStep(currentStep + 1);
+  }
+
+  async function handleGlobalSkipWizard() {
+    setShowGlobalSkipConfirm(false);
+    setGlobalSkipped(true);
+    // Skip entire wizard and close it
+    await invoke("skip_dependency_installation", { config: localConfig });
+    onClose();
   }
 
   function canProceed() {
@@ -732,14 +748,23 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
 
       {/* Navigation */}
       <div className="flex items-center justify-between">
-        <button
-          onClick={() => setCurrentStep(Math.max(1, currentStep - 1))}
-          disabled={currentStep === 1}
-          className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-30"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          上一步
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowGlobalSkipConfirm(true)}
+            className="neon-secondary flex items-center gap-1.5 text-sm"
+          >
+            <SkipForward className="h-4 w-4" />
+            跳过向导
+          </button>
+          <button
+            onClick={() => setCurrentStep(Math.max(1, currentStep - 1))}
+            disabled={currentStep === 1}
+            className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-30"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            上一步
+          </button>
+        </div>
 
         <div className="text-xs text-gray-500">
           步骤 {currentStep} / {totalSteps}
@@ -777,6 +802,16 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         confirmText="确认跳过"
         onConfirm={handleSkipInstallation}
         onCancel={() => setShowSkipConfirm(false)}
+      />
+
+      {/* Global skip wizard confirm dialog */}
+      <ConfirmDialog
+        open={showGlobalSkipConfirm}
+        title="跳过整个安装向导"
+        message="这将跳过整个安装向导，包括环境配置、Proton选择、依赖安装等所有步骤。系统将使用默认配置，但可能影响 WeGame 的正常运行。确定要跳过吗？"
+        confirmText="确认跳过"
+        onConfirm={handleGlobalSkipWizard}
+        onCancel={() => setShowGlobalSkipConfirm(false)}
       />
 
       {/* Password input dialog */}
