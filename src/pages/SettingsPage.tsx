@@ -21,7 +21,7 @@ export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      {/* Sub-tab bar + Re-setup button */}
+      {/* Sub-tab bar */}
       <div className="flex items-center justify-between">
         <div className="flex gap-1 rounded-xl bg-surface-light/40 p-1">
           {tabs.map((tab) => (
@@ -39,16 +39,6 @@ export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
             </button>
           ))}
         </div>
-
-        {onOpenSetupWizard && (
-          <button
-            onClick={onOpenSetupWizard}
-            className="neon-secondary flex items-center gap-1.5 text-sm"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            重新配置环境
-          </button>
-        )}
       </div>
 
       {/* Sub-tab content */}

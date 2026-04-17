@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../utils/api";
-import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2, Download, Edit3, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2, Download, Edit3, ExternalLink, SkipForward } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import useInstallProgress from "../hooks/useInstallProgress";
@@ -42,6 +42,8 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [localConfig, setLocalConfig] = useState<EnvironmentConfig | null>(null);
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
   const [installing, setInstalling] = useState(false);
+  const [showSkipConfirm, setShowSkipConfirm] = useState(false);
+  const [skippedInstall, setSkippedInstall] = useState(false);
 
   // Dependency scan state
   interface ScannedPath {
@@ -162,12 +164,23 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       await saveEnvironment(localConfig!);
       // Init prefix first
       await invoke("init_environment", { config: localConfig });
-      // Install dependencies
-      await invoke("start_install_dependencies", { selectedIds: selectedDeps, config: localConfig });
+      // Install dependencies or skip
+      if (skippedInstall) {
+        await invoke("skip_dependency_installation", { config: localConfig });
+      } else {
+        await invoke("start_install_dependencies", { selectedIds: selectedDeps, config: localConfig });
+      }
     } catch (err) {
       console.error("Setup failed:", err);
     }
     setInstalling(false);
+  }
+
+  async function handleSkipInstallation() {
+    setShowSkipConfirm(false);
+    setSkippedInstall(true);
+    // Proceed to next step automatically
+    setCurrentStep(currentStep + 1);
   }
 
   function canProceed() {
@@ -609,6 +622,23 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                 预计占用 ~{(selectedDeps.length * 45).toFixed(0)} MB
               </span>
             </div>
+            
+            {/* Skip installation option */}
+            <div className="flex items-center justify-between rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-yellow-400">跳过依赖安装</p>
+                <p className="text-xs text-yellow-500 mt-1">
+                  可以跳过依赖安装直接配置环境，但可能影响 WeGame 功能
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSkipConfirm(true)}
+                className="neon-secondary flex items-center gap-1.5 text-sm px-3 py-1.5"
+              >
+                <SkipForward className="h-3.5 w-3.5" />
+                跳过安装
+              </button>
+            </div>
           </div>
         )}
 
@@ -705,6 +735,16 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       </div>
         </div>
       </div>
+
+      {/* Skip installation confirm dialog */}
+      <ConfirmDialog
+        open={showSkipConfirm}
+        title="跳过依赖安装"
+        message="这将跳过所有依赖组件的安装。跳过依赖可能导致 WeGame 功能受限或无法正常运行。您可以在依赖管理中重新安装这些组件。确定要跳过吗？"
+        confirmText="确认跳过"
+        onConfirm={handleSkipInstallation}
+        onCancel={() => setShowSkipConfirm(false)}
+      />
     </div>
   );
 }
