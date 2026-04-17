@@ -50,6 +50,7 @@ export default function Dependencies() {
   const [deps, setDeps] = useState<DependencyItem[]>(ALL_DEPS.map((d) => ({ ...d, installed: false })));
   const [filter, setFilter] = useState<FilterType>("all");
   const [showReinstallConfirm, setShowReinstallConfirm] = useState(false);
+  const [skippedDeps, setSkippedDeps] = useState<Set<string>>(new Set());
 
   // Fetch dependency list with installed status from backend
   const fetchDeps = useCallback(async () => {

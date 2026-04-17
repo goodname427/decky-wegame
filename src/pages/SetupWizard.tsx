@@ -5,6 +5,7 @@ import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import useInstallProgress from "../hooks/useInstallProgress";
 import LogViewer from "../components/LogViewer";
+import ConfirmDialog from "../components/ConfirmDialog";
 import type { EnvironmentConfig, DependencyCategory } from "../types";
 import { DEPENDENCY_LIST } from "../utils/constants";
 
