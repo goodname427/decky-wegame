@@ -69,8 +69,8 @@ export const validateProtonPath = (path: string) =>
 // Dependencies
 export const getDependencyList = (config?: any) =>
   invoke("get_dependency_list", config ? { config } : undefined);
-export const startInstallDependencies = (config: any, selectedIds: string[]) =>
-  invoke("start_install_dependencies", { config, selectedIds });
+export const startInstallDependencies = (config: any, selectedIds: string[], sudoPassword?: string) =>
+  invoke("start_install_dependencies", { config, selectedIds, sudoPassword });
 
 // Skip dependency installation
 export const skipDependencyInstallation = (config: any) =>

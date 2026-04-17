@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "../utils/api";
+import { invoke, startInstallDependencies } from "../utils/api";
 import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2, Download, Edit3, ExternalLink, SkipForward } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
@@ -44,6 +44,9 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [installing, setInstalling] = useState(false);
   const [showSkipConfirm, setShowSkipConfirm] = useState(false);
   const [skippedInstall, setSkippedInstall] = useState(false);
+  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
 
   // Dependency scan state
   interface ScannedPath {
@@ -168,12 +171,41 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       if (skippedInstall) {
         await invoke("skip_dependency_installation", { config: localConfig });
       } else {
-        await invoke("start_install_dependencies", { selectedIds: selectedDeps, config: localConfig });
+        // Check if we need sudo permissions for winetricks
+        const systemInfo = await invoke("get_system_info");
+        if (!systemInfo.winetricks_available) {
+          // Show password dialog for winetricks installation
+          setShowPasswordDialog(true);
+          return; // Wait for password input
+        }
+        await startInstallDependencies(localConfig, selectedDeps);
       }
     } catch (err) {
       console.error("Setup failed:", err);
     }
     setInstalling(false);
+  }
+
+  async function handlePasswordSubmit() {
+    if (!password.trim()) {
+      setPasswordError("请输入密码");
+      return;
+    }
+    
+    setPasswordError("");
+    setShowPasswordDialog(false);
+    
+    try {
+      // Start installation with password
+      await startInstallDependencies(localConfig, selectedDeps, password);
+    } catch (err) {
+      console.error("Installation failed:", err);
+      // Show password dialog again if authentication failed
+      setPasswordError("密码错误，请重新输入");
+      setShowPasswordDialog(true);
+    }
+    
+    setPassword("");
   }
 
   async function handleSkipInstallation() {
@@ -745,6 +777,56 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         onConfirm={handleSkipInstallation}
         onCancel={() => setShowSkipConfirm(false)}
       />
+
+      {/* Password input dialog */}
+      <div className={`fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-300 ${showPasswordDialog ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowPasswordDialog(false)} />
+        <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-surface-dark p-6 shadow-2xl mx-4">
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold text-gray-100">需要管理员权限</h3>
+            <p className="mt-1 text-sm text-gray-400">
+              安装 winetricks 需要管理员权限。请输入您的密码以继续安装过程。
+            </p>
+          </div>
+          
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">密码</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setPasswordError("");
+                }}
+                placeholder="请输入您的密码"
+                className={`w-full px-3 py-2 rounded-lg border bg-white/5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
+                  passwordError ? "border-red-500 focus:ring-red-500" : "border-white/10 focus:ring-primary"
+                }`}
+                autoFocus
+              />
+              {passwordError && (
+                <p className="mt-1 text-xs text-red-400">{passwordError}</p>
+              )}
+            </div>
+            
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setShowPasswordDialog(false)}
+                className="flex-1 px-4 py-2 rounded-lg border border-white/10 text-gray-300 hover:bg-white/5 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handlePasswordSubmit}
+                className="flex-1 px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

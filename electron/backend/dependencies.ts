@@ -111,15 +111,19 @@ function isWinetricksAvailable(): boolean {
 /**
  * Install winetricks if not available
  */
-async function installWinetricks(): Promise<void> {
+async function installWinetricks(sudoPassword?: string): Promise<void> {
   log.info("Installing winetricks...");
   
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-c", `
-      curl -sSL https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o /tmp/winetricks &&
-      chmod +x /tmp/winetricks &&
-      sudo mv /tmp/winetricks /usr/local/bin/winetricks
-    `], {
+    const installCommand = sudoPassword 
+      ? `curl -sSL https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o /tmp/winetricks &&
+         chmod +x /tmp/winetricks &&
+         echo "${sudoPassword}" | sudo -S mv /tmp/winetricks /usr/local/bin/winetricks`
+      : `curl -sSL https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o /tmp/winetricks &&
+         chmod +x /tmp/winetricks &&
+         sudo mv /tmp/winetricks /usr/local/bin/winetricks`;
+    
+    const child = spawn("bash", ["-c", installCommand], {
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -164,7 +168,8 @@ async function installWinetricks(): Promise<void> {
 export async function installDependencies(
   winePrefixPath: string,
   selectedIds: string[],
-  emitter: ProgressEmitter
+  emitter: ProgressEmitter,
+  sudoPassword?: string
 ): Promise<void> {
   log.separator();
   log.info("=== Dependency Installation Start ===");
@@ -184,7 +189,7 @@ export async function installDependencies(
     });
     
     try {
-      await installWinetricks();
+      await installWinetricks(sudoPassword);
       emitter.emitProgress({
         current_dependency: "winetricks",
         current_step: "Winetricks installed successfully",

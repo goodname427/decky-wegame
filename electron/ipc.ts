@@ -62,7 +62,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return getDependencyList(prefixPath);
   });
 
-  ipcMain.handle("start_install_dependencies", async (_event, args: { config: EnvironmentConfig; selectedIds: string[] }) => {
+  ipcMain.handle("start_install_dependencies", async (_event, args: { config: EnvironmentConfig; selectedIds: string[]; sudoPassword?: string }) => {
     if (installing) {
       throw new Error("Installation already in progress");
     }
@@ -79,7 +79,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
         emitLog: (log) => {
           win?.webContents.send("log-event", log);
         },
-      });
+      }, args.sudoPassword);
     } finally {
       installing = false;
     }
