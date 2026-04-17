@@ -2,8 +2,6 @@
 // In Electron mode, uses window.electronAPI (exposed via preload)
 // Type declarations for ElectronAPI are in src/vite-env.d.ts
 
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-
 function getAPI(): ElectronAPI {
   if (window.electronAPI) {
     return window.electronAPI;
