@@ -3,7 +3,8 @@ import path from "path";
 
 const LOG_DIR_NAME = "decky-wegame/logs";
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per log file
-const MAX_LOG_FILES = 3; // Keep up to 3 rotated files
+const MAX_LOG_FILES = 10; // Keep up to 10 rotated files
+const MAX_SESSION_LOGS = 20; // Keep up to 20 session log files
 
 type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -19,8 +20,60 @@ function getLogDir(): string {
   return logDir;
 }
 
-function getLogFilePath(name: string): string {
+/**
+ * Generate a unique session ID for this run
+ */
+function generateSessionId(): string {
+  const now = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+/**
+ * Get session-specific log file path
+ */
+function getSessionLogFilePath(name: string, sessionId?: string): string {
+  const session = sessionId || generateSessionId();
+  return path.join(getLogDir(), `${name}_${session}.log`);
+}
+
+/**
+ * Get latest session log file path
+ */
+function getLatestSessionLogFilePath(name: string): string {
   return path.join(getLogDir(), `${name}.log`);
+}
+
+/**
+ * Clean up old session logs to avoid disk space issues
+ */
+function cleanupOldSessionLogs(name: string): void {
+  try {
+    const logDir = getLogDir();
+    const files = fs.readdirSync(logDir).filter(f => f.startsWith(`${name}_`) && f.endsWith('.log'));
+    
+    if (files.length > MAX_SESSION_LOGS) {
+      // Sort by creation time (newest first)
+      const sortedFiles = files.map(f => ({
+        name: f,
+        path: path.join(logDir, f),
+        time: fs.statSync(path.join(logDir, f)).birthtime.getTime()
+      })).sort((a, b) => b.time - a.time);
+      
+      // Remove oldest files beyond the limit
+      const filesToRemove = sortedFiles.slice(MAX_SESSION_LOGS);
+      filesToRemove.forEach(file => {
+        try {
+          fs.unlinkSync(file.path);
+          console.log(`Cleaned up old log file: ${file.name}`);
+        } catch (err) {
+          console.warn(`Failed to cleanup log file ${file.name}: ${err}`);
+        }
+      });
+    }
+  } catch (err) {
+    console.warn(`Failed to cleanup session logs: ${err}`);
+  }
 }
 
 function rotateIfNeeded(filePath: string): void {
@@ -51,12 +104,17 @@ function formatTimestamp(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
 }
 
-function writeLog(logName: string, level: LogLevel, message: string): void {
+function writeLog(logName: string, level: LogLevel, message: string, sessionId?: string): void {
   try {
-    const filePath = getLogFilePath(logName);
+    const filePath = getSessionLogFilePath(logName, sessionId);
+    const latestPath = getLatestSessionLogFilePath(logName);
+    
     rotateIfNeeded(filePath);
     const line = `[${formatTimestamp()}] [${level}] ${message}\n`;
     fs.appendFileSync(filePath, line, "utf-8");
+    
+    // Also write to latest file for backward compatibility
+    fs.appendFileSync(latestPath, line, "utf-8");
   } catch {
     // Silently fail - logging should never crash the app
   }
@@ -64,21 +122,55 @@ function writeLog(logName: string, level: LogLevel, message: string): void {
 
 /**
  * Create a named logger instance that writes to a specific log file.
- * Log files are stored in ~/.local/share/decky-wegame/logs/<name>.log
+ * Each session gets its own log file with timestamp.
  */
 export function createLogger(name: string) {
+  const sessionId = generateSessionId();
+  
+  // Cleanup old logs on startup
+  cleanupOldSessionLogs(name);
+  
   return {
-    debug: (msg: string) => writeLog(name, "DEBUG", msg),
-    info: (msg: string) => writeLog(name, "INFO", msg),
-    warn: (msg: string) => writeLog(name, "WARN", msg),
-    error: (msg: string) => writeLog(name, "ERROR", msg),
+    debug: (msg: string) => writeLog(name, "DEBUG", msg, sessionId),
+    info: (msg: string) => writeLog(name, "INFO", msg, sessionId),
+    warn: (msg: string) => writeLog(name, "WARN", msg, sessionId),
+    error: (msg: string) => writeLog(name, "ERROR", msg, sessionId),
 
     /** Log a separator line for readability */
-    separator: () => writeLog(name, "INFO", "─".repeat(60)),
+    separator: () => writeLog(name, "INFO", "─".repeat(60), sessionId),
 
     /** Get the path to this logger's log file */
-    getLogPath: () => getLogFilePath(name),
+    getLogPath: () => getSessionLogFilePath(name, sessionId),
+    
+    /** Get the path to the latest log file */
+    getLatestLogPath: () => getLatestSessionLogFilePath(name),
+    
+    /** Get the session ID for this logger */
+    getSessionId: () => sessionId,
   };
+}
+
+/**
+ * Clean up all log files
+ */
+export function cleanupAllLogs(): void {
+  try {
+    const logDir = getLogDir();
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.log'));
+    
+    files.forEach(file => {
+      try {
+        fs.unlinkSync(path.join(logDir, file));
+        console.log(`Cleaned up log file: ${file}`);
+      } catch (err) {
+        console.warn(`Failed to cleanup log file ${file}: ${err}`);
+      }
+    });
+    
+    console.log(`Cleaned up ${files.length} log files`);
+  } catch (err) {
+    console.error(`Failed to cleanup logs: ${err}`);
+  }
 }
 
 /** Main application logger */

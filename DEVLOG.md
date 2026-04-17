@@ -97,3 +97,51 @@
     - 下载安装：显示安装命令和外部链接
     - 所有依赖必须解决后才能进入下一步
 - **修复**：修复后端 `types.ts` 中多余的 `}` 语法错误
+
+## 2026-04-18 — 依赖安装失败修复 & 日志系统改进
+
+- **依赖安装失败修复**：
+  - 问题：所有依赖安装失败，日志显示 `spawn winetricks ENOENT` 错误
+  - 原因：系统未安装 winetricks 命令
+  - 修复：在 `dependencies.ts` 中添加 winetricks 自动检测和安装逻辑
+    - 新增 `isWinetricksAvailable()` 检测函数
+    - 新增 `installWinetricks()` 自动安装函数（通过 curl 下载并安装到 /usr/local/bin）
+    - 在安装依赖前先检查并安装 winetricks
+    - 安装失败时提供手动安装指引
+
+- **日志系统改进**：
+  - 问题：所有日志写入同一个文件，不利于调试和历史追踪
+  - 改进：重构 `logger.ts`，实现会话级日志管理
+    - 每次运行生成唯一会话ID（格式：YYYYMMDD_HHMMSS）
+    - 日志文件命名：`应用名_会话ID.log`（如：`dependencies_20240418_020106.log`）
+    - 保留向后兼容性：同时写入会话文件和 `应用名.log` 最新文件
+    - 自动清理：最多保留 20 个会话日志文件，防止磁盘空间占用
+    - 日志轮转：单文件最大 5MB，自动轮转保留 10 个历史文件
+
+- **设置页面增强**：
+  - 新增「缓存与日志管理」模块
+    - 添加「清理日志文件」功能，一键删除所有历史日志
+    - 显示日志文件信息和存储路径
+    - 清理状态反馈（成功/失败提示）
+    - 清理确认对话框，防止误操作
+
+- **依赖管理跳过功能**：
+  - 新增「跳过安装」按钮，允许用户跳过当前依赖安装
+  - 跳过状态显示：在依赖列表中标记已跳过的项目
+  - 跳过警告提示：显示跳过的依赖数量和影响说明
+  - 跳过确认对话框：提醒用户跳过可能影响功能
+  - 后端支持：新增 `skip_dependency_installation` IPC 接口
+  - 状态管理：记录已跳过的依赖，支持后续重新安装
+
+- **API 接口扩展**：
+  - 新增 `skipDependencyInstallation()` API 方法
+  - 新增 `cleanupLogs()` API 方法
+  - 更新 IPC 处理函数支持新功能
+
+- **文件修改**：
+  - `electron/backend/dependencies.ts`：添加 winetricks 检测和安装
+  - `electron/backend/logger.ts`：重构日志系统，支持会话级日志
+  - `src/pages/Settings.tsx`：添加日志清理界面
+  - `src/pages/Dependencies.tsx`：添加跳过功能界面
+  - `electron/ipc.ts`：添加新 IPC 接口
+  - `src/utils/api.ts`：添加新 API 方法

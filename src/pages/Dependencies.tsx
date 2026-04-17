@@ -7,6 +7,8 @@ import {
   XCircle,
   Loader2,
   AlertTriangle,
+  SkipForward,
+  Info,
 } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import LogViewer from "../components/LogViewer";
@@ -47,11 +49,11 @@ type FilterType = "all" | "installed" | "missing" | "error";
 export default function Dependencies() {
   const { config } = useEnvironment();
   const { progress, logs } = useInstallProgress();
-  const [deps, setDeps] = useState<DependencyItem[]>(
-    ALL_DEPS.map((d) => ({ ...d, installed: false }))
-  );
+  const [deps, setDeps] = useState<DependencyItem[]>(ALL_DEPS.map((d) => ({ ...d, installed: false })));
   const [filter, setFilter] = useState<FilterType>("all");
   const [showReinstallConfirm, setShowReinstallConfirm] = useState(false);
+  const [showSkipConfirm, setShowSkipConfirm] = useState(false);
+  const [skippedDeps, setSkippedDeps] = useState<Set<string>>(new Set());
 
   // Fetch dependency list with installed status from backend
   const fetchDeps = useCallback(async () => {
@@ -86,12 +88,28 @@ export default function Dependencies() {
     }
   }
 
+  async function handleSkipInstallation() {
+    try {
+      await invoke("skip_dependency_installation", { config });
+      setSkippedDeps(new Set(deps.filter(d => !d.installed).map(d => d.id)));
+      setShowSkipConfirm(false);
+    } catch (err) {
+      console.error("Skip installation error:", err);
+    }
+  }
+
+  // Get dependencies that are actually being installed (not skipped)
+  function getActiveDependencies() {
+    return deps.filter(dep => !skippedDeps.has(dep.id));
+  }
+
   const filtered = getFilteredDeps();
-  const installedCount = deps.filter((d) => d.installed).length;
+  const activeDeps = getActiveDependencies();
+  const installedCount = activeDeps.filter((d) => d.installed).length;
   const totalSize = deps.reduce((sum, d) => sum + d.size_mb, 0);
 
   async function handleInstallSelected() {
-    const missingIds = deps.filter((d) => !d.installed).map((d) => d.id);
+    const missingIds = deps.filter((d) => !d.installed && !skippedDeps.has(d.id)).map((d) => d.id);
     if (missingIds.length === 0) return;
 
     try {
@@ -112,11 +130,19 @@ export default function Dependencies() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => handleInstallSelected()}
-            disabled={progress.status === "running" || installedCount === deps.length}
+            disabled={progress.status === "running" || installedCount === activeDeps.length}
             className="neon-primary flex items-center gap-1.5 text-sm"
           >
             <Download className="h-3.5 w-3.5" />
             安装缺失项
+          </button>
+          <button
+            onClick={() => setShowSkipConfirm(true)}
+            disabled={progress.status === "running" || installedCount === activeDeps.length}
+            className="neon-secondary flex items-center gap-1.5 text-sm"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
+            跳过安装
           </button>
           <button
             onClick={() => setShowReinstallConfirm(true)}
@@ -128,6 +154,19 @@ export default function Dependencies() {
           </button>
         </div>
       </div>
+
+      {/* Skip installation warning */}
+      {skippedDeps.size > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-sm text-yellow-400">
+          <Info className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">已跳过 {skippedDeps.size} 个依赖的安装</p>
+            <p className="text-xs mt-1 text-yellow-500">
+              跳过的依赖可能影响 WeGame 功能。您可以在依赖管理中重新安装这些组件。
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Filter tabs */}
       <div className="flex gap-2">
@@ -143,7 +182,7 @@ export default function Dependencies() {
           >
             {f === "all" ? "全部" : f === "installed" ? "已安装" : "未安装"}
             <span className={`ml-1.5 text-[10px] ${filter === f ? "text-primary/70" : "text-gray-600"}`}>
-              ({f === "all" ? deps.length : f === "installed" ? installedCount : deps.length - installedCount})
+              ({f === "all" ? deps.length : f === "installed" ? installedCount : activeDeps.length - installedCount})
             </span>
           </button>
         ))}
@@ -198,12 +237,16 @@ export default function Dependencies() {
                 {catDeps.map((dep) => (
                   <div
                     key={dep.id}
-                    className="glass-card-hover group flex items-center gap-3 px-4 py-3"
+                    className={`glass-card-hover group flex items-center gap-3 px-4 py-3 ${
+                      skippedDeps.has(dep.id) ? "opacity-60" : ""
+                    }`}
                   >
                     {/* Status icon */}
                     <div className="shrink-0">
                       {dep.installed ? (
                         <CheckCircle2 className="h-4.5 w-4.5 text-neon-green" />
+                      ) : skippedDeps.has(dep.id) ? (
+                        <SkipForward className="h-4.5 w-4.5 text-yellow-500" />
                       ) : progress.current_dependency === dep.id && progress.status === "running" ? (
                         <Loader2 className="h-4.5 w-4.5 animate-spin text-primary" />
                       ) : (
@@ -220,6 +263,11 @@ export default function Dependencies() {
                         {dep.required && (
                           <span className="shrink-0 rounded bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary">
                             必需
+                          </span>
+                        )}
+                        {skippedDeps.has(dep.id) && (
+                          <span className="shrink-0 rounded bg-yellow-500/10 px-1.5 py-px text-[10px] font-medium text-yellow-500">
+                            已跳过
                           </span>
                         )}
                       </div>
@@ -241,8 +289,11 @@ export default function Dependencies() {
       {/* Summary footer */}
       <div className="glass-card mt-4 flex items-center justify-between px-4 py-3 text-xs">
         <div className="flex items-center gap-4 text-gray-400">
-          <span>已安装 <strong className="text-gray-200">{installedCount}</strong> / {deps.length} 个</span>
+          <span>已安装 <strong className="text-gray-200">{installedCount}</strong> / {activeDeps.length} 个</span>
           <span>预计占用 ~<strong className="text-gray-200">{totalSize.toFixed(0)}</strong> MB</span>
+          {skippedDeps.size > 0 && (
+            <span className="text-yellow-500">已跳过 <strong>{skippedDeps.size}</strong> 个</span>
+          )}
         </div>
       </div>
 
@@ -262,6 +313,7 @@ export default function Dependencies() {
         confirmText="确认重装"
         onConfirm={async () => {
           setShowReinstallConfirm(false);
+          setSkippedDeps(new Set()); // Clear skipped deps on reinstall
           try {
             await invoke("start_install_dependencies", {
               selectedIds: deps.map((d) => d.id),
@@ -272,6 +324,16 @@ export default function Dependencies() {
           }
         }}
         onCancel={() => setShowReinstallConfirm(false)}
+      />
+
+      {/* Skip installation confirm dialog */}
+      <ConfirmDialog
+        open={showSkipConfirm}
+        title="跳过依赖安装"
+        message="这将跳过所有未安装的依赖组件。跳过依赖可能导致 WeGame 功能受限或无法正常运行。您可以在依赖管理中重新安装这些组件。确定要跳过吗？"
+        confirmText="确认跳过"
+        onConfirm={handleSkipInstallation}
+        onCancel={() => setShowSkipConfirm(false)}
       />
     </div>
   );

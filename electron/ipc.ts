@@ -8,6 +8,7 @@ import { getDependencyList, installDependencies } from "./backend/dependencies";
 import { checkForUpdate, downloadAndInstallUpdate, UpdateChannel } from "./backend/updater";
 import { scanAllDependencies, validateDependencyPath } from "./backend/dep-scanner";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
+import { cleanupAllLogs } from "./backend/logger";
 import os from "os";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -81,6 +82,41 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       });
     } finally {
       installing = false;
+    }
+  });
+
+  // Skip dependency installation
+  ipcMain.handle("skip_dependency_installation", async (_event, args: { config: EnvironmentConfig }) => {
+    const win = getMainWindow();
+    
+    // Send completion progress with skip message
+    win?.webContents.send("install-progress", {
+      current_dependency: "",
+      current_step: "已跳过依赖安装",
+      progress_percent: 100,
+      total_steps: 1,
+      completed_steps: 1,
+      status: "completed",
+      error_message: "用户选择跳过依赖安装。您可以在依赖管理中重新安装这些组件。",
+    });
+
+    // Send log entry
+    win?.webContents.send("log-event", {
+      level: "info",
+      message: "用户选择跳过依赖安装。跳过的依赖可以在依赖管理中重新安装。",
+      timestamp: new Date().toTimeString().slice(0, 8),
+    });
+
+    return { success: true, skipped: true };
+  });
+
+  // Log management
+  ipcMain.handle("cleanup_logs", async () => {
+    try {
+      cleanupAllLogs();
+      return { success: true, message: "日志文件清理完成" };
+    } catch (err) {
+      return { success: false, message: `日志清理失败: ${err}` };
     }
   });
 

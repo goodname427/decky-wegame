@@ -96,6 +96,36 @@ export interface ProgressEmitter {
   emitLog: (log: LogPayload) => void;
 }
 
+/**
+ * Check if winetricks is available in the system
+ */
+function isWinetricksAvailable(): boolean {
+  try {
+    execSync("which winetricks", { encoding: "utf-8" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Install winetricks if not available
+ */
+function installWinetricks(): void {
+  log.info("Installing winetricks...");
+  try {
+    execSync("curl -sSL https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o /tmp/winetricks", {
+      encoding: "utf-8"
+    });
+    execSync("chmod +x /tmp/winetricks", { encoding: "utf-8" });
+    execSync("sudo mv /tmp/winetricks /usr/local/bin/winetricks", { encoding: "utf-8" });
+    log.info("Winetricks installed successfully");
+  } catch (err) {
+    log.error(`Failed to install winetricks: ${err}`);
+    throw new Error("Failed to install winetricks. Please install it manually: sudo pacman -S winetricks");
+  }
+}
+
 export async function installDependencies(
   winePrefixPath: string,
   selectedIds: string[],
@@ -105,6 +135,42 @@ export async function installDependencies(
   log.info("=== Dependency Installation Start ===");
   log.info(`Wine prefix: ${winePrefixPath}`);
   log.info(`Selected dependencies: ${selectedIds.join(", ")}`);
+
+  // Check if winetricks is available
+  if (!isWinetricksAvailable()) {
+    log.warn("Winetricks not found, attempting to install...");
+    emitter.emitProgress({
+      current_dependency: "winetricks",
+      current_step: "Installing winetricks...",
+      progress_percent: 0,
+      total_steps: selectedIds.length + 1,
+      completed_steps: 0,
+      status: "running",
+    });
+    
+    try {
+      installWinetricks();
+      emitter.emitProgress({
+        current_dependency: "winetricks",
+        current_step: "Winetricks installed successfully",
+        progress_percent: Math.round((1 / (selectedIds.length + 1)) * 100),
+        total_steps: selectedIds.length + 1,
+        completed_steps: 1,
+        status: "running",
+      });
+    } catch (err) {
+      emitter.emitProgress({
+        current_dependency: "winetricks",
+        current_step: "Failed to install winetricks",
+        progress_percent: 0,
+        total_steps: selectedIds.length + 1,
+        completed_steps: 0,
+        status: "error",
+        error_message: `Winetricks installation failed: ${err}`,
+      });
+      throw err;
+    }
+  }
 
   const total = selectedIds.length;
   let completed = 0;

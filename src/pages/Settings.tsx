@@ -8,6 +8,8 @@ import {
   Terminal,
   Upload,
   AlertTriangle,
+  Trash2,
+  CheckCircle2,
 } from "lucide-react";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -24,7 +26,9 @@ export default function Settings() {
     launch_args: "",
   });
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [cleanupStatus, setCleanupStatus] = useState<"idle" | "success" | "error">("idle");
   const [envVars, setEnvVars] = useState<[string, string][]>(
     Object.entries(config.extra_env_vars || {})
   );
@@ -68,6 +72,18 @@ export default function Settings() {
     }
     setEnvVars(updated);
     setSaved(false);
+  }
+
+  async function handleCleanupLogs() {
+    try {
+      await invoke("cleanup_logs");
+      setCleanupStatus("success");
+      setTimeout(() => setCleanupStatus("idle"), 3000);
+    } catch (err) {
+      console.error("Log cleanup error:", err);
+      setCleanupStatus("error");
+      setTimeout(() => setCleanupStatus("idle"), 3000);
+    }
   }
 
   return (
@@ -210,6 +226,50 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Cache & Logs Management */}
+      <div className="glass-card p-5">
+        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-gray-100">
+          <Trash2 className="h-4.5 w-4.5 text-neon-yellow" />
+          缓存与日志管理
+        </h3>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-medium text-gray-200">清理日志文件</h4>
+              <p className="text-xs text-gray-500 mt-1">删除所有历史日志文件，释放磁盘空间</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {cleanupStatus === "success" && (
+                <span className="text-xs text-neon-green flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  清理完成
+                </span>
+              )}
+              {cleanupStatus === "error" && (
+                <span className="text-xs text-neon-red">清理失败</span>
+              )}
+              <button
+                onClick={() => setShowCleanupConfirm(true)}
+                className="neon-secondary text-sm px-4 py-2"
+              >
+                清理日志
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-white/10 pt-3">
+            <h4 className="text-sm font-medium text-gray-200 mb-2">日志文件信息</h4>
+            <div className="text-xs text-gray-500 space-y-1">
+              <p>• 每次运行都会创建新的日志文件，格式：<code className="bg-white/5 px-1 rounded">应用名_YYYYMMDD_HHMMSS.log</code></p>
+              <p>• 最多保留最近 20 个会话的日志文件</p>
+              <p>• 单个日志文件最大 5MB，自动轮转</p>
+              <p>• 日志目录：<code className="bg-white/5 px-1 rounded">~/.local/share/decky-wegame/logs/</code></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Danger Zone */}
       <div className="border border-neon-red/20 rounded-xl overflow-hidden">
         <div className="bg-neon-red/5 px-5 py-3 flex items-center gap-2">
@@ -254,6 +314,19 @@ export default function Settings() {
           }
         }}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      {/* Log cleanup confirmation dialog */}
+      <ConfirmDialog
+        open={showCleanupConfirm}
+        title="清理日志文件"
+        message="这将删除所有历史日志文件，包括应用日志、依赖安装日志等。清理后无法恢复，但不会影响当前运行的应用。确定要继续吗？"
+        confirmText="确认清理"
+        onConfirm={async () => {
+          setShowCleanupConfirm(false);
+          await handleCleanupLogs();
+        }}
+        onCancel={() => setShowCleanupConfirm(false)}
       />
     </div>
   );
