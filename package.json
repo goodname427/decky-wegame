@@ -2,6 +2,11 @@
   "name": "decky-wegame",
   "private": true,
   "version": "0.1.0",
+  "description": "A tool to run Tencent WeGame on Steam Deck via Proton/Wine",
+  "author": {
+    "name": "goodname427",
+    "email": "goodname427@users.noreply.github.com"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
