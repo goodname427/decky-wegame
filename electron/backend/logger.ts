@@ -35,7 +35,7 @@ function rotateIfNeeded(filePath: string): void {
       const newer = i === 1 ? filePath : `${filePath}.${i - 1}`;
       if (fs.existsSync(newer)) {
         if (i === MAX_LOG_FILES) {
-          fs.unlinkSync(older).toString;
+          fs.unlinkSync(older);
         }
         fs.renameSync(newer, older);
       }
