@@ -19,7 +19,7 @@ export default function App() {
     async function checkFirstRun() {
       try {
         const config = await invoke("get_config");
-        const prefixInfo = await invoke("get_prefix_info", { config });
+        const prefixInfo = (await invoke("get_prefix_info", { config })) as { exists: boolean };
         if (!prefixInfo.exists) {
           setShowSetupWizard(true);
         }
