@@ -178,3 +178,18 @@
   - `src/pages/Dependencies.tsx`：移除跳过安装相关功能
   - `src/pages/SetupWizard.tsx`：添加跳过安装功能
 - **效果**：功能分工更清晰，减少用户混淆，提升使用体验
+
+## 2026-04-18 — 修复TypeScript编译错误
+
+- **问题**：构建过程中出现TypeScript编译错误，影响打包流程
+- **错误详情**：
+  - `SetupWizard.tsx(772,8): error TS2304: Cannot find name 'ConfirmDialog'`
+  - `Dependencies.tsx(204,23): error TS2304: Cannot find name 'skippedDeps'`
+  - `Dependencies.tsx(229,26): error TS2304: Cannot find name 'skippedDeps'`
+- **修复方案**：
+  - **SetupWizard.tsx**：添加缺失的ConfirmDialog组件导入
+  - **Dependencies.tsx**：添加skippedDeps状态变量定义，类型为Set<string>
+- **修改文件**：
+  - `src/pages/SetupWizard.tsx`：添加`import ConfirmDialog from "../components/ConfirmDialog";`
+  - `src/pages/Dependencies.tsx`：添加`const [skippedDeps, setSkippedDeps] = useState<Set<string>>(new Set());`
+- **效果**：TypeScript编译错误已修复，构建流程可以正常进行
