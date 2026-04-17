@@ -55,23 +55,7 @@ chmod +x ~/Desktop/WeGame_Launcher-*.AppImage
 
 ---
 
-### 方式二：在 SteamOS 上从源码构建
-
-> 适用于想自己修改代码后编译的场景。Steam Deck 根分区空间有限，构建过程较复杂。
-
-```bash
-cd ~/Desktop
-git clone https://github.com/你的用户名/DeckyWeGame.git
-cd DeckyWeGame
-chmod +x install.sh
-./install.sh
-```
-
-> 详见 `install.sh` 脚本，会自动安装 Rust、Node.js、pnpm 等所有依赖并构建项目。
-
----
-
-### 方式三：本地开发
+### 方式二：本地开发
 
 ```bash
 # 需要先安装 Node.js
@@ -115,7 +99,6 @@ DeckyWeGame/
 │   ├── components/      # 可复用 UI 组件
 │   ├── hooks/           # 自定义 Hooks
 │   └── utils/           # 常量、辅助函数和 API 桥接层
-├── install.sh           # SteamOS 源码构建脚本
 └── package.json         # 依赖配置
 ```
 
