@@ -1,0 +1,99 @@
+# 开发日志 (Development Log)
+
+本文件记录 WeGame Launcher 项目的开发过程、功能变更和重要决策。
+
+---
+
+## 2026-04-16 — 项目初始化 & Tauri 框架搭建
+
+- **项目创建**：初始化 WeGame Launcher 项目，目标是在 SteamOS / Steam Deck 上运行腾讯 WeGame
+- **技术栈**：React 18 + TypeScript + TailwindCSS（前端），Tauri + Rust（后端）
+- **核心功能模块**：
+  - 环境初始化（Wine Prefix 创建）
+  - Proton 版本管理（自动检测 GE-Proton）
+  - 依赖安装（通过 winetricks 安装 .NET、VC++、字体等）
+  - WeGame 启停管理
+  - 游戏库扫描 & 添加到 Steam
+  - 高级设置（自定义路径、环境变量、启动参数）
+- **CI/CD**：配置 GitHub Actions 自动构建，产出 deb 包
+
+## 2026-04-17 — CI 构建调试 & AppImage 支持
+
+- **AppImage 构建**：修改 CI 配置，从仅产出 deb 改为同时产出 deb + AppImage（Steam Deck 需要 AppImage 格式）
+- **CI 环境调试**：
+  - 尝试 Arch Linux 容器构建（匹配 SteamOS），遇到 AppImage 需要 FUSE 的问题
+  - 尝试修复 gdk-pixbuf loaders 路径问题
+  - 最终切换回 Ubuntu 22.04 构建以解决 GLIBC 兼容性
+- **EGL 崩溃问题**：Steam Deck 上运行 Tauri AppImage 时遇到 `Could not create default EGL display: EGL_BAD_PARAMETER` 错误
+  - 尝试 `WEBKIT_DISABLE_DMABUF_RENDERER=1` 环境变量 → 无效
+  - 根本原因：AppImage 打包的 WebKitGTK 库与 Steam Deck GPU 驱动不兼容
+
+## 2026-04-17 — 从 Tauri 迁移到 Electron
+
+- **决策**：由于 Tauri 的 WebKitGTK/EGL 兼容性问题无法在 Steam Deck 上解决，决定迁移到 Electron
+  - Electron 自带 Chromium，不依赖系统 WebView，彻底解决 EGL 问题
+  - 前端代码（React + TailwindCSS）几乎零改动
+  - 后端从 Rust 改为 Node.js/TypeScript（核心逻辑是调用 shell 命令，Node.js 更简单）
+- **迁移工作**：
+  - 创建 `electron/` 目录，包含 `main.ts`、`preload.ts`、`ipc.ts`
+  - 将 Rust 后端 9 个模块逐一迁移为 TypeScript：`config.ts`、`environment.ts`、`proton.ts`、`launcher.ts`、`dependencies.ts`、`steam.ts`、`types.ts`
+  - 创建前端桥接层 `src/utils/api.ts`，替代 Tauri 的 `invoke`/`listen`
+  - 适配所有前端 hooks 和 pages（8 个文件），从 `@tauri-apps/api` 迁移到 Electron IPC
+  - 更新 `package.json`（添加 Electron 依赖，移除 Tauri 依赖）
+  - 创建 `electron-builder.yml` 配置
+  - 更新 GitHub Actions 为 Electron 构建流程
+- **移除废弃代码**：删除 `src-tauri/` 目录和 `install.sh` 脚本
+- **更新 README**：统一采用 GitHub Actions 打包方式
+
+## 2026-04-17 — CI 构建修复
+
+- **deb 打包修复**：添加 `author` 和 `description` 到 `package.json`（electron-builder 构建 deb 时必需）
+
+## 2026-04-18 — UI 重构：页签整合 & 日志系统
+
+- **页签重构**：
+  - 将 6 个页签精简为 4 个：控制台、启动器、设置、关于帮助
+  - 环境设置从常驻页签改为首次打开时自动弹出的 Modal 向导
+  - 依赖管理和高级配置合并到「设置」页签，内部分子页签切换
+  - 在设置页添加「重新配置环境」按钮，支持重新打开向导
+- **日志系统**：
+  - 新增 `logger.ts` 通用日志模块，日志存储在 `~/.local/share/decky-wegame/logs/`
+  - 为 launcher.ts 添加完整日志（Proton 路径、环境变量、子进程 stdout/stderr、退出码）
+  - 为 dependencies.ts 添加安装日志（winetricks 命令输出、成功/失败状态）
+  - 支持日志轮转（单文件最大 5MB，保留 3 个历史文件）
+- **依赖安装修复**：
+  - 修复 `getDependencyList()` 始终返回 `installed: false` 的 bug → 新增 `checkInstalledWinetricks()` 检测已安装包
+  - 修复全部安装失败仍显示"完成"的 bug → 区分全部成功/部分失败/全部失败三种状态
+  - 安装完成后自动刷新依赖列表
+- **TS 编译修复**：
+  - 修复 `prefixInfo` 类型断言问题（TS18046）
+  - 修复 `unlinkSync` 返回值调用 `.toString` 的问题
+
+## 2026-04-18 — 环境检查 & 版本更新检查
+
+- **环境检查步骤**：在设置向导中新增第一步「环境检查」
+  - 自动检测 Wine 和 winetricks 是否已安装
+  - 未安装时显示详细安装指引（包括 SteamOS 解锁只读文件系统的方法）
+  - 未通过检测时阻止进入下一步
+- **版本更新检查**：
+  - 后端：新增 `updater.ts` 模块，支持两个更新渠道
+    - 正式版（Stable）：从 GitHub Releases 检测，支持一键下载 AppImage
+    - 开发版（Dev）：从 GitHub Actions 检测最新成功构建
+  - 前端：新增 `UpdateChecker.tsx` 组件
+    - 渠道选择、检查更新、版本对比、更新说明展示
+    - 下载进度条、下载完成提示
+  - 集成到设置页「版本更新」子页签和关于页面快速检查入口
+
+## 2026-04-18 — 依赖扫描功能
+
+- **依赖扫描系统**：将环境设置向导第一步从简单的"有/无"检测改为完整的扫描+选择流程
+  - 后端：新增 `dep-scanner.ts` 模块
+    - 扫描 Wine 和 winetricks 在系统中的所有路径（PATH、已知目录、Proton 内置、Flatpak 等）
+    - 支持 glob 通配符路径解析
+    - 路径验证功能（检查文件存在、可执行权限、运行 `--version`）
+  - 前端：改造向导第一步 UI
+    - 扫描到多个路径时显示列表供选择（默认选第一个），附带版本号和来源标签
+    - 自定义路径：手动输入 + 后端验证
+    - 下载安装：显示安装命令和外部链接
+    - 所有依赖必须解决后才能进入下一步
+- **修复**：修复后端 `types.ts` 中多余的 `}` 语法错误
