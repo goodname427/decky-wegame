@@ -193,3 +193,12 @@
   - `src/pages/SetupWizard.tsx`：添加`import ConfirmDialog from "../components/ConfirmDialog";`
   - `src/pages/Dependencies.tsx`：添加`const [skippedDeps, setSkippedDeps] = useState<Set<string>>(new Set());`
 - **效果**：TypeScript编译错误已修复，构建流程可以正常进行
+
+## 2026-04-18 — 清理无用目录
+
+- **清理内容**：删除无用的image目录
+- **操作详情**：
+  - 从git中移除image/README/1776271232782.zip文件
+  - 删除本地image目录
+- **原因**：该目录已不再需要，清理项目结构
+- **效果**：项目结构更简洁，减少不必要的文件占用
