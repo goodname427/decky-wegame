@@ -8,6 +8,13 @@ mod steam;
 mod types;
 
 fn main() {
+    // Fix EGL initialization failure on Steam Deck:
+    // "Could not create default EGL display: EGL_BAD_PARAMETER"
+    // Force WebKitGTK to use WaylandEGL or fallback to software rendering
+    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
