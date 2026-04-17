@@ -67,7 +67,6 @@ export interface SystemInfo {
   winetricks_available: boolean;
   wine_available: boolean;
 }
-}
 
 export interface LogPayload {
   level: string;

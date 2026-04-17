@@ -6,6 +6,7 @@ import { launchWegame, stopWegame, checkWegameStatus } from "./backend/launcher"
 import { generateDesktopEntry, addToSteam, listWegameGames } from "./backend/steam";
 import { getDependencyList, installDependencies } from "./backend/dependencies";
 import { checkForUpdate, downloadAndInstallUpdate, UpdateChannel } from "./backend/updater";
+import { scanAllDependencies, validateDependencyPath } from "./backend/dep-scanner";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import os from "os";
 import fs from "fs";
@@ -124,6 +125,15 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       winetricks_available: winetricksAvailable,
       wine_available: wineAvailable,
     };
+  });
+
+  // Dependency scanning
+  ipcMain.handle("scan_system_dependencies", async () => {
+    return scanAllDependencies();
+  });
+
+  ipcMain.handle("validate_dependency_path", async (_event, args: { depId: string; path: string }) => {
+    return validateDependencyPath(args.depId, args.path);
   });
 
   // Update check

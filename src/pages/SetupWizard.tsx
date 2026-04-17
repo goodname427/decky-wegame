@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../utils/api";
-import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2, Download, Edit3, ExternalLink } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
 import useInstallProgress from "../hooks/useInstallProgress";
@@ -9,7 +9,7 @@ import type { EnvironmentConfig, DependencyCategory } from "../types";
 import { DEPENDENCY_LIST } from "../utils/constants";
 
 const STEPS = [
-  { id: 1, title: "环境检查", icon: ShieldCheck },
+  { id: 1, title: "扫描依赖", icon: ShieldCheck },
   { id: 2, title: "选择 Proton", icon: Cpu },
   { id: 3, title: "配置路径", icon: FolderCog },
   { id: 4, title: "确认依赖", icon: ListChecks },
@@ -42,11 +42,35 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [localConfig, setLocalConfig] = useState<EnvironmentConfig | null>(null);
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
   const [installing, setInstalling] = useState(false);
-  const [envCheck, setEnvCheck] = useState<{
-    checking: boolean;
-    winetricks: boolean | null;
-    wine: boolean | null;
-  }>({ checking: false, winetricks: null, wine: null });
+
+  // Dependency scan state
+  interface ScannedPath {
+    path: string;
+    version?: string;
+    source: string;
+  }
+  interface DepScanResult {
+    id: string;
+    name: string;
+    description: string;
+    found: boolean;
+    paths: ScannedPath[];
+    install_hint: string;
+    download_url?: string;
+  }
+  type DepSelection = "scanned" | "custom" | "download";
+  interface DepState {
+    scanResult: DepScanResult | null;
+    selection: DepSelection;
+    selectedPathIdx: number;
+    customPath: string;
+    customValidating: boolean;
+    customValid: boolean | null;
+    customError?: string;
+  }
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [depStates, setDepStates] = useState<Record<string, DepState>>({});
 
   const { versions: protonVersions, loading: protonLoading } = useProtonVersions();
   const { config, systemInfo, saveEnvironment } = useEnvironment();
@@ -60,28 +84,65 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     setSelectedDeps(DEPENDENCY_LIST.filter((d) => d.required).map((d) => d.id));
   }
 
-  // Run environment check when wizard opens
+  // Run dependency scan when wizard opens
   useEffect(() => {
-    if (open && envCheck.winetricks === null && !envCheck.checking) {
-      runEnvCheck();
+    if (open && !scanned && !scanning) {
+      runScan();
     }
   }, [open]);
 
-  async function runEnvCheck() {
-    setEnvCheck({ checking: true, winetricks: null, wine: null });
+  async function runScan() {
+    setScanning(true);
     try {
-      const info = (await invoke("get_system_info")) as {
-        winetricks_available: boolean;
-        wine_available?: boolean;
-      };
-      setEnvCheck({
-        checking: false,
-        winetricks: info.winetricks_available,
-        wine: info.wine_available ?? false,
-      });
+      const results = (await invoke("scan_system_dependencies")) as DepScanResult[];
+      const newStates: Record<string, DepState> = {};
+      for (const r of results) {
+        newStates[r.id] = {
+          scanResult: r,
+          selection: r.found ? "scanned" : "download",
+          selectedPathIdx: 0,
+          customPath: "",
+          customValidating: false,
+          customValid: null,
+        };
+      }
+      setDepStates(newStates);
+      setScanned(true);
     } catch {
-      setEnvCheck({ checking: false, winetricks: false, wine: false });
+      setScanned(true);
+    } finally {
+      setScanning(false);
     }
+  }
+
+  function updateDepState(depId: string, partial: Partial<DepState>) {
+    setDepStates((prev) => ({
+      ...prev,
+      [depId]: { ...prev[depId], ...partial },
+    }));
+  }
+
+  async function validateCustomPath(depId: string, path: string) {
+    updateDepState(depId, { customValidating: true, customValid: null, customError: undefined });
+    try {
+      const result = await invoke("validate_dependency_path", { depId, path });
+      if (result) {
+        updateDepState(depId, { customValidating: false, customValid: true });
+      } else {
+        updateDepState(depId, { customValidating: false, customValid: false, customError: "路径无效或文件不可执行" });
+      }
+    } catch {
+      updateDepState(depId, { customValidating: false, customValid: false, customError: "验证失败" });
+    }
+  }
+
+  function isDepReady(depId: string): boolean {
+    const state = depStates[depId];
+    if (!state) return false;
+    if (state.selection === "scanned" && state.scanResult?.found) return true;
+    if (state.selection === "custom" && state.customValid === true) return true;
+    if (state.selection === "download") return true; // User chose to download later
+    return false;
   }
 
   if (!open || !localConfig) return null;
@@ -111,7 +172,12 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
 
   function canProceed() {
     switch (currentStep) {
-      case 1: return envCheck.winetricks === true && envCheck.wine === true;
+      case 1: {
+        // All deps must be resolved (scanned+selected, custom+valid, or download)
+        const depIds = Object.keys(depStates);
+        if (depIds.length === 0) return false;
+        return depIds.every((id) => isDepReady(id));
+      }
       case 2: return true; // Proton auto-selects if none chosen
       case 3: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
       case 4: return selectedDeps.length > 0;
@@ -182,107 +248,182 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         {currentStep === 1 && (
           <div className="space-y-5">
             <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-100">环境检查</h3>
-              <p className="mt-1 text-sm text-gray-400">检测系统中是否已安装必要的工具。winetricks 和 Wine 是安装依赖的前置条件。</p>
+              <h3 className="text-lg font-semibold text-gray-100">扫描系统依赖</h3>
+              <p className="mt-1 text-sm text-gray-400">自动扫描系统中已有的 Wine 和 winetricks，也可以手动指定路径或选择下载安装。</p>
             </div>
 
-            {envCheck.checking ? (
+            {scanning ? (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
                 <Loader2 className="h-8 w-8 text-primary animate-spin" />
-                <span className="text-sm text-gray-400">正在检测系统环境...</span>
+                <span className="text-sm text-gray-400">正在扫描系统依赖...</span>
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Wine check */}
-                <div className={`flex items-start gap-3 rounded-lg border p-4 ${
-                  envCheck.wine === true
-                    ? "border-neon-green/20 bg-neon-green/5"
-                    : envCheck.wine === false
-                      ? "border-neon-red/20 bg-neon-red/5"
-                      : "border-white/10 bg-white/5"
-                }`}>
-                  <div className="mt-0.5">
-                    {envCheck.wine === true ? (
-                      <CheckCircle className="h-5 w-5 text-neon-green" />
-                    ) : envCheck.wine === false ? (
-                      <XCircle className="h-5 w-5 text-neon-red" />
-                    ) : null}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-gray-200">Wine</h4>
-                    {envCheck.wine === true ? (
-                      <p className="mt-0.5 text-xs text-gray-400">Wine 已安装 ✓</p>
-                    ) : envCheck.wine === false ? (
-                      <div className="mt-1 space-y-2">
-                        <p className="text-xs text-gray-400">未检测到 Wine。Wine 通常由 Proton 提供，请确保已安装 GE-Proton。</p>
-                        <div className="rounded bg-surface-dark/80 p-2.5 text-xs text-gray-400 font-mono">
-                          <p className="text-gray-500 mb-1"># 如果使用 Flatpak 版 Steam，Wine 通常已内置</p>
-                          <p className="text-gray-500"># 否则可手动安装：</p>
-                          <p>sudo pacman -S wine <span className="text-gray-600"># Arch/SteamOS</span></p>
+                {Object.values(depStates).map((state) => {
+                  const dep = state.scanResult;
+                  if (!dep) return null;
+                  const ready = isDepReady(dep.id);
+
+                  return (
+                    <div key={dep.id} className={`rounded-lg border overflow-hidden ${
+                      ready ? "border-neon-green/20" : "border-white/10"
+                    }`}>
+                      {/* Header */}
+                      <div className={`flex items-center gap-3 px-4 py-3 ${
+                        ready ? "bg-neon-green/5" : "bg-white/[0.02]"
+                      }`}>
+                        {ready ? (
+                          <CheckCircle className="h-5 w-5 text-neon-green shrink-0" />
+                        ) : (
+                          <XCircle className="h-5 w-5 text-gray-500 shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-semibold text-gray-200">{dep.name}</h4>
+                          <p className="text-xs text-gray-500">{dep.description}</p>
                         </div>
                       </div>
-                    ) : null}
-                  </div>
-                </div>
 
-                {/* Winetricks check */}
-                <div className={`flex items-start gap-3 rounded-lg border p-4 ${
-                  envCheck.winetricks === true
-                    ? "border-neon-green/20 bg-neon-green/5"
-                    : envCheck.winetricks === false
-                      ? "border-neon-red/20 bg-neon-red/5"
-                      : "border-white/10 bg-white/5"
-                }`}>
-                  <div className="mt-0.5">
-                    {envCheck.winetricks === true ? (
-                      <CheckCircle className="h-5 w-5 text-neon-green" />
-                    ) : envCheck.winetricks === false ? (
-                      <XCircle className="h-5 w-5 text-neon-red" />
-                    ) : null}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-gray-200">winetricks</h4>
-                    {envCheck.winetricks === true ? (
-                      <p className="mt-0.5 text-xs text-gray-400">winetricks 已安装 ✓</p>
-                    ) : envCheck.winetricks === false ? (
-                      <div className="mt-1 space-y-2">
-                        <p className="text-xs text-gray-400">
-                          未检测到 winetricks。winetricks 是安装 Windows 运行时依赖（如 .NET、VC++）的必要工具。
-                        </p>
-                        <div className="rounded bg-surface-dark/80 p-2.5 text-xs text-gray-400 font-mono space-y-1">
-                          <p className="text-gray-500"># SteamOS / Arch Linux（需先解锁只读文件系统）：</p>
-                          <p>sudo steamos-readonly disable</p>
-                          <p>sudo pacman -Sy winetricks</p>
-                          <p>sudo steamos-readonly enable</p>
-                          <p className="text-gray-500 mt-2"># 或者直接下载脚本（无需 root）：</p>
-                          <p>mkdir -p ~/.local/bin</p>
-                          <p>curl -L https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -o ~/.local/bin/winetricks</p>
-                          <p>chmod +x ~/.local/bin/winetricks</p>
-                          <p className="text-gray-500"># 确保 ~/.local/bin 在 PATH 中</p>
-                          <p>export PATH="$HOME/.local/bin:$PATH"</p>
-                        </div>
+                      <div className="px-4 py-3 space-y-2">
+                        {/* Scanned paths */}
+                        {dep.found && dep.paths.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[11px] font-medium uppercase tracking-wider text-gray-500">扫描到的路径</span>
+                            {dep.paths.map((p, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => updateDepState(dep.id, { selection: "scanned", selectedPathIdx: idx })}
+                                className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all border ${
+                                  state.selection === "scanned" && state.selectedPathIdx === idx
+                                    ? "border-primary/50 bg-primary/8 ring-1 ring-primary/30"
+                                    : "border-white/5 hover:bg-white/5"
+                                }`}
+                              >
+                                <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                                  state.selection === "scanned" && state.selectedPathIdx === idx
+                                    ? "bg-primary shadow-sm shadow-primary/50"
+                                    : "bg-gray-600"
+                                }`} />
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-xs font-mono text-gray-300 block truncate">{p.path}</span>
+                                  <span className="text-[10px] text-gray-500">
+                                    {p.source}{p.version ? ` · ${p.version}` : ""}
+                                  </span>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Not found hint */}
+                        {!dep.found && (
+                          <div className="flex items-start gap-2 rounded-lg border border-neon-yellow/20 bg-neon-yellow/5 p-2.5">
+                            <AlertTriangle className="h-3.5 w-3.5 text-neon-yellow mt-0.5 shrink-0" />
+                            <p className="text-xs text-gray-400">未在系统中扫描到 {dep.name}，请选择自定义路径或下载安装。</p>
+                          </div>
+                        )}
+
+                        {/* Divider */}
+                        {dep.found && <div className="border-t border-white/5 my-1" />}
+
+                        {/* Custom path option */}
+                        <button
+                          onClick={() => updateDepState(dep.id, { selection: "custom" })}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all border ${
+                            state.selection === "custom"
+                              ? "border-accent/50 bg-accent/8 ring-1 ring-accent/30"
+                              : "border-white/5 hover:bg-white/5"
+                          }`}
+                        >
+                          <Edit3 className={`h-3.5 w-3.5 shrink-0 ${
+                            state.selection === "custom" ? "text-accent" : "text-gray-500"
+                          }`} />
+                          <span className={`text-xs font-medium ${
+                            state.selection === "custom" ? "text-accent" : "text-gray-400"
+                          }`}>自定义路径</span>
+                        </button>
+
+                        {/* Custom path input */}
+                        {state.selection === "custom" && (
+                          <div className="ml-6 space-y-2">
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={state.customPath}
+                                onChange={(e) => updateDepState(dep.id, { customPath: e.target.value, customValid: null })}
+                                placeholder={`输入 ${dep.name} 可执行文件的完整路径`}
+                                className="flex-1 rounded-lg border border-white/10 bg-surface-light/60 px-3 py-1.5 text-xs text-gray-200 font-mono focus:border-primary/40 focus:outline-none"
+                              />
+                              <button
+                                onClick={() => validateCustomPath(dep.id, state.customPath)}
+                                disabled={!state.customPath.trim() || state.customValidating}
+                                className="neon-secondary text-xs px-3 py-1.5 shrink-0 disabled:opacity-30"
+                              >
+                                {state.customValidating ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : "验证"}
+                              </button>
+                            </div>
+                            {state.customValid === true && (
+                              <p className="text-xs text-neon-green flex items-center gap-1">
+                                <CheckCircle className="h-3 w-3" /> 路径有效
+                              </p>
+                            )}
+                            {state.customValid === false && (
+                              <p className="text-xs text-neon-red flex items-center gap-1">
+                                <XCircle className="h-3 w-3" /> {state.customError || "路径无效"}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Download option */}
+                        <button
+                          onClick={() => updateDepState(dep.id, { selection: "download" })}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all border ${
+                            state.selection === "download"
+                              ? "border-neon-yellow/50 bg-neon-yellow/8 ring-1 ring-neon-yellow/30"
+                              : "border-white/5 hover:bg-white/5"
+                          }`}
+                        >
+                          <Download className={`h-3.5 w-3.5 shrink-0 ${
+                            state.selection === "download" ? "text-neon-yellow" : "text-gray-500"
+                          }`} />
+                          <div className="flex-1">
+                            <span className={`text-xs font-medium ${
+                              state.selection === "download" ? "text-neon-yellow" : "text-gray-400"
+                            }`}>下载安装</span>
+                          </div>
+                          {dep.download_url && (
+                            <a
+                              href={dep.download_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[10px] text-gray-500 hover:text-primary flex items-center gap-0.5"
+                            >
+                              <ExternalLink className="h-2.5 w-2.5" /> 查看
+                            </a>
+                          )}
+                        </button>
+
+                        {/* Download install hint */}
+                        {state.selection === "download" && dep.install_hint && (
+                          <div className="ml-6 rounded bg-surface-dark/80 p-2.5 text-xs text-gray-400 font-mono whitespace-pre-wrap leading-relaxed max-h-[120px] overflow-y-auto">
+                            {dep.install_hint}
+                          </div>
+                        )}
                       </div>
-                    ) : null}
-                  </div>
-                </div>
+                    </div>
+                  );
+                })}
 
-                {/* Warning if not all passed */}
-                {(envCheck.winetricks === false || envCheck.wine === false) && (
-                  <div className="flex items-start gap-2 rounded-lg border border-neon-yellow/20 bg-neon-yellow/5 p-3">
-                    <AlertTriangle className="h-4 w-4 text-neon-yellow mt-0.5 shrink-0" />
-                    <p className="text-xs text-gray-300">
-                      请先安装缺失的工具，然后点击「重新检测」。安装完成前无法继续下一步。
-                    </p>
-                  </div>
-                )}
-
-                {/* Re-check button */}
+                {/* Re-scan button */}
                 <button
-                  onClick={runEnvCheck}
+                  onClick={() => { setScanned(false); runScan(); }}
                   className="neon-secondary flex items-center gap-2 text-sm"
                 >
                   <RefreshCw className="h-4 w-4" />
-                  重新检测
+                  重新扫描
                 </button>
               </div>
             )}
