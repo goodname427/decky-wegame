@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "../utils/api";
 import {
   Rocket,
@@ -22,11 +23,17 @@ import type { GameEntry } from "../types";
 const LAUNCHER_LOG_HINT = "详细日志：~/.local/share/decky-wegame/logs/launcher.log";
 
 type BannerKind = "error" | "warning";
+interface BannerAction {
+  label: string;
+  onClick: () => void;
+  icon?: ReactNode;
+}
 interface Banner {
   kind: BannerKind;
   title: string;
   detail?: string;
   hint?: string;
+  actions?: BannerAction[];
 }
 
 export default function Launcher() {
@@ -91,11 +98,27 @@ export default function Launcher() {
       setLaunchBusy(false);
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Launch error:", err);
+      const isNotInstalled =
+        msg.includes("WeGame executable not found") ||
+        msg.includes("WeGameLauncher.exe") ||
+        msg.includes("not found. Please install WeGame");
       setBanner({
         kind: "error",
-        title: "启动 WeGame 失败",
+        title: isNotInstalled ? "尚未安装 WeGame" : "启动 WeGame 失败",
         detail: msg,
-        hint: LAUNCHER_LOG_HINT,
+        hint: isNotInstalled
+          ? "请通过「配置向导 → 步骤 5：安装 WeGame」自动下载并安装，或手动把 WeGameLauncher.exe 放到 prefix 里。"
+          : LAUNCHER_LOG_HINT,
+        actions: isNotInstalled
+          ? [
+              {
+                label: "打开配置向导",
+                onClick: () =>
+                  window.dispatchEvent(new CustomEvent("open-setup-wizard")),
+                icon: <Rocket className="h-3.5 w-3.5" />,
+              },
+            ]
+          : undefined,
       });
     }
   }
@@ -175,6 +198,20 @@ export default function Launcher() {
             {banner.hint && (
               <div className="mt-1.5 text-[11px] text-gray-500 break-all">
                 {banner.hint}
+              </div>
+            )}
+            {banner.actions && banner.actions.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {banner.actions.map((a, i) => (
+                  <button
+                    key={i}
+                    onClick={a.onClick}
+                    className="neon-secondary inline-flex items-center gap-1.5 text-xs px-3 py-1.5"
+                  >
+                    {a.icon}
+                    {a.label}
+                  </button>
+                ))}
               </div>
             )}
           </div>

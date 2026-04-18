@@ -22,31 +22,31 @@ export const WEGAME_DEFAULT_INSTALL_PATH =
 
 export const DEPENDENCY_LIST: Omit<DependencyItem, "installed" | "install_time">[] = [
   // ========================================================================
-  // 推荐（默认勾选）：解决 WeGame 中文界面显示问题
+  // 按需（默认不勾选）：Proton-GE 已内置，或仅在特定报错时补装
+  //   策略说明（PRD §4.1 步骤2）：WeGame 主体是 C++/Qt，不依赖 .NET；
+  //   Proton-GE 已内置 vcrun / d3dx9 / corefonts / CJK 字体渲染 等常用依赖，
+  //   重复安装无意义且易失败（尤其是字体在 winetricks 新版本下常因
+  //   prefix 未初始化、wine 版本不匹配而报 c0000135）。
+  //   按需依赖仅当 WeGame 运行时报具体错误时，再由用户手动勾选安装。
   // ========================================================================
+
+  // 字体类（Proton-GE 已自带 CJK 渲染，通常无需额外安装）
   {
     id: "font-microsoft-core",
     name: "Microsoft Core Fonts",
     category: "font",
-    description: "Arial、Times New Roman 等基础英文字体（推荐）",
+    description: "Arial、Times New Roman 等基础英文字体；仅当界面出现英文字体异常时再安装",
     size_mb: 8,
-    required: true,
+    required: false,
   },
   {
     id: "font-cjk",
     name: "CJK Support Fonts (CJKfonts)",
     category: "font",
-    description: "中日韩字体，解决 WeGame 界面中文方块问题（强烈推荐）",
+    description: "中日韩字体；Proton-GE 通常已能正常显示中文，仅在出现方块/乱码时再安装",
     size_mb: 25,
-    required: true,
+    required: false,
   },
-
-  // ========================================================================
-  // 按需（默认不勾选）：Proton-GE 已内置，或仅在特定报错时补装
-  //   策略说明（PRD §4.1 步骤2）：WeGame 主体是 C++/Qt，不依赖 .NET；
-  //   Proton-GE 已内置 vcrun/d3dx9 等常用依赖，重复安装无意义且易失败。
-  //   按需依赖仅当 WeGame 运行时报具体错误时，再由用户手动勾选安装。
-  // ========================================================================
 
   // .NET Framework（Wine 下不稳定，按需安装）
   {

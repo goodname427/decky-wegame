@@ -18,6 +18,14 @@ import {
   fetchLatestGeProtonInfo,
   installWinetricksUserlocal,
 } from "./backend/middleware";
+import {
+  downloadAndInstallWegame,
+  downloadWegameInstaller,
+  runWegameInstaller,
+  getInstallerInfo,
+  isWegameInstalled,
+  clearInstallerCache,
+} from "./backend/wegame_installer";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import { cleanupAllLogs } from "./backend/logger";
 import { runDiagnostics } from "./backend/diagnostics";
@@ -260,6 +268,52 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle("install_winetricks_userlocal", async () => {
     return await installWinetricksUserlocal();
+  });
+
+  // --- WeGame installer (PRD v1.7 §4.1 step 5) -----------------------------
+
+  ipcMain.handle("get_wegame_installer_info", async (_event, args?: { config?: EnvironmentConfig }) => {
+    const info = getInstallerInfo(args?.config);
+    return info;
+  });
+
+  ipcMain.handle("check_wegame_installed", async (_event, args: { config: EnvironmentConfig }) => {
+    return isWegameInstalled(args.config);
+  });
+
+  ipcMain.handle("download_wegame_installer", async (_event, args: { config: EnvironmentConfig }) => {
+    const win = getMainWindow();
+    return await downloadWegameInstaller(args.config, (p) => {
+      win?.webContents.send("wegame-install-progress", p);
+    });
+  });
+
+  ipcMain.handle(
+    "run_wegame_installer",
+    async (_event, args: { config: EnvironmentConfig; installerPath: string }) => {
+      const win = getMainWindow();
+      return await runWegameInstaller(args.installerPath, args.config, (p) => {
+        win?.webContents.send("wegame-install-progress", p);
+      });
+    }
+  );
+
+  ipcMain.handle(
+    "install_wegame",
+    async (_event, args: { config: EnvironmentConfig; forceRedownload?: boolean }) => {
+      const win = getMainWindow();
+      return await downloadAndInstallWegame(
+        args.config,
+        { forceRedownload: args.forceRedownload },
+        (p) => {
+          win?.webContents.send("wegame-install-progress", p);
+        }
+      );
+    }
+  );
+
+  ipcMain.handle("clear_wegame_installer_cache", async (_event, args?: { config?: EnvironmentConfig }) => {
+    return clearInstallerCache(args?.config);
   });
 
   // Update check

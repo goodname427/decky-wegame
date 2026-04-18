@@ -181,3 +181,6 @@ export const launcherLogger = createLogger("launcher");
 
 /** Dependency installation logger */
 export const depsLogger = createLogger("dependencies");
+
+/** WeGame installer logger (download + run WeGameSetup.exe) */
+export const installerLogger = createLogger("installer");

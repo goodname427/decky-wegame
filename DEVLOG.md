@@ -144,3 +144,66 @@
   - Error banner 保留直到下次成功操作或用户手动关闭，不自动消失 → 用户有时间复制错误信息
 - **不做的事**：暂不做 toast 库依赖；暂不在后端加心跳探测（3 秒足够覆盖 95% 场景）
 - **关键文件**：`PRD.md`（新增 §4.3.1；Changelog v1.6）、`DEVLOG.md`、`src/pages/Launcher.tsx`、`src/pages/Dashboard.tsx`
+
+## 2026-04-18 — 安装向导新增"安装 WeGame"步骤 + 根因修复字体安装失败（v1.7）
+
+### 背景
+v1.6 修好"启动无反应"的 UI 反馈问题后，真正的根因暴露出来：
+1. 启动报 `WeGame executable not found` — **向导从未有"安装 WeGame"步骤**，用户跑完向导 prefix 里根本没有 WeGameLauncher.exe
+2. `winetricks corefonts / cjkfonts` 全部失败于 `c0000135 (DLL_NOT_FOUND)` — `syswow64/regedit.exe` 不存在，说明 prefix 还未经 wineboot 初始化
+3. 诊断面板在 `config.proton_path` 有值时仍误报"未选择或找不到 Proton" — 诊断函数读 `config` 时机早于前端加载完成
+
+### 变更（四合一）
+
+#### M1：依赖策略进一步最小化（字体改为完全按需）
+- 背景：实机日志证明新版 winetricks（20260125-next）+ GE-Proton7-20 + 全新 prefix 跑 `corefonts/cjkfonts` 必踩 `c0000135` 坑，而 Proton-GE 本身已能正常渲染中文
+- `src/utils/constants.ts` / `electron/backend/dependencies.ts`：`font-microsoft-core` 与 `font-cjk` 的 `required` 从 `true` 改 `false`
+- 分组注释从"推荐（默认勾选）"挪到"按需（默认不勾选）"；描述注明"Proton-GE 通常已能正常渲染，仅在方块/乱码时补装"
+
+#### M2：向导新增步骤 5「安装 WeGame」
+- 后端新增 `electron/backend/wegame_installer.ts`：
+  - `getInstallerInfo`：返回本地缓存路径/是否已缓存/大小/默认下载 URL
+  - `isWegameInstalled`：按 `<prefix>/drive_c/Program Files/Tencent/WeGame/WeGameLauncher.exe` 等 4 条路径探测
+  - `downloadWegameInstaller`：HTTPS 跟随重定向下载到 `~/.cache/decky-wegame/installers/WeGameSetup.exe`（默认腾讯官方 `dldir1.qq.com` 源，支持 `extra_env_vars.WEGAME_INSTALLER_URL` 覆盖）
+  - `runWegameInstaller`：调 `resolveWineBackendEnv` + `ensureWinePrefixInitialized`，spawn `wine64 WeGameSetup.exe`，5s 心跳把进度推进到 80% 上限，进程结束后用 `isWegameInstalled` 二次校验才判定成功
+  - `downloadAndInstallWegame`：向导主流程入口（已缓存则跳过下载）
+  - `clearInstallerCache`：失败时清缓存重下
+- 新增 5 个 IPC：`get_wegame_installer_info` / `check_wegame_installed` / `download_wegame_installer` / `run_wegame_installer` / `install_wegame` / `clear_wegame_installer_cache`，进度通过 `wegame-install-progress` 事件广播
+- 新增 `installerLogger`（单独输出到 `logs/installer_*.log`），与 `dependencies_*.log` 区分，便于后续排错
+- `src/pages/SetupWizard.tsx`：
+  - `STEPS` 加第 5 项"安装 WeGame"；`canProceed` 加 `case 5: return true`
+  - 监听 `wegame-install-progress` 事件驱动 UI 阶段 / 进度 / 消息 / 错误
+  - 步骤 4 `progress.status==="completed"` 时自动推进到步骤 5 并预先探测安装状态
+  - 步骤 5 UI：已安装 → 绿色卡片 + "重新下载并安装"；未安装 → 黄色卡片 + "下载并安装 WeGame"；进行中 → 进度条 + "请在 GUI 向导里完成步骤"提示；失败 → 红色卡片 + 「重试 / 清缓存重下」
+  - 底部导航栏的"步骤 X / 4"改为 "X / 5"（用 `totalSteps`），"完成"按钮仅在步骤 5 展示（文字随 `wegameInstalled` 切换为「完成」或「稍后安装并完成」），步骤 4 的"下一步"被 `progress.status !== "completed"` 禁用防止用户跳过依赖安装
+- `src/pages/Launcher.tsx`：错误 banner 支持 `actions[]`，当错误文本含 "WeGame executable not found" 时标题切为「尚未安装 WeGame」，并附直达按钮"打开配置向导"（dispatch `open-setup-wizard` 自定义事件）
+- `src/App.tsx`：监听 `open-setup-wizard` 事件打开向导（避免把 `onOpenSetupWizard` callback 一级级穿到 Launcher）
+
+#### M3：修复 `proton-version` 诊断误报
+- `electron/backend/diagnostics.ts` 的 `checkProtonVersion` 增加自动回退：`config.proton_path` 为空/失效时调用 `scanProtonVersions() + getDefaultProtonPath()`，与 `resolveWineBackendEnv` 行为对齐
+- 命中自动回退时在 `message` 后附"（自动检测）"标识，避免用户误解诊断结果
+
+#### M4：依赖安装前强制保证 prefix 已初始化
+- `electron/backend/dependencies.ts` 新增 `ensureWinePrefixInitialized`：
+  - 快速路径：`drive_c/windows/syswow64/regedit.exe` 存在 → 立即返回
+  - 否则：用同一份 `resolveWineBackendEnv` 产出的 env 跑 `wine64 wineboot --init`；180 秒硬超时 + 60 秒空闲杀进程；即使退出码非零，只要 `regedit.exe` 最终出现也视为成功
+  - 末尾再跑 `wineserver -w` 等待 prefix 完全就绪，避免 winetricks 与 wineserver race
+- `installDependencies` 在 `resolveWineBackendEnv` 之后立即调用该函数，失败则 emit error 终止，不再盲目进入 winetricks 循环
+- `wegame_installer.runWegameInstaller` 也复用此函数，保证第一次跑安装器时 prefix 已就绪
+
+### 关键技术决策
+- **WeGame 下载不让用户提供源**：默认固化腾讯官方 `dldir1.qq.com`，但保留 `WEGAME_INSTALLER_URL` 覆盖位，供内部测试/镜像用
+- **安装进度的"心跳"策略**：安装器是 Windows GUI，不可能拿到真实进度；选 5 秒一跳、上限 80%，让用户看到"东西在走"且最后 20% 留给后置校验阶段
+- **判定"安装成功"只以文件存在为准**：不少 wine GUI 安装器退出码不稳（警告也可能非零），唯一可靠信号是 `WeGameLauncher.exe` 是否出现
+- **全局事件而非 prop-drilling**：`open-setup-wizard` 自定义事件避免为一个一次性按钮修改 4 层组件签名
+- **字体彻底改按需，不再"保留推荐"**：实机证据太硬（每次都 c0000135），保留推荐反而会让新用户第一次装就失败；老用户可以手动去依赖管理勾
+
+### 不做的事
+- 不在向导里提供"浏览本地 .exe"选项（backend 已具备 `run_wegame_installer(installerPath)` 能力，但 UI 先保持简单，v1.8 视需要再加）
+- 不把 WeGame 安装器内置到应用包里（体积巨大、版权、版本过时问题）
+- 不做静默/自动化点击"下一步"（依赖 xdotool/wine 版本兼容性差，维护成本太高）
+
+### 关键文件
+- 新增：`electron/backend/wegame_installer.ts`
+- 修改：`PRD.md`（向导 4→5 步；Changelog v1.7；依赖分层表；步骤 4 wineboot 说明；新增步骤 5 完整规格 + IPC 表）、`DEVLOG.md`、`electron/backend/dependencies.ts`（M1 + M4）、`electron/backend/diagnostics.ts`（M3）、`electron/backend/logger.ts`（新增 `installerLogger`）、`electron/ipc.ts`（注册 5 个新 IPC）、`src/utils/constants.ts`（M1）、`src/utils/api.ts`（6 个新 API 封装）、`src/pages/SetupWizard.tsx`（步骤 5 全部逻辑）、`src/pages/Launcher.tsx`（错误 banner actions）、`src/App.tsx`（全局事件监听）
+

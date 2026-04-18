@@ -122,3 +122,17 @@ export const downloadAndInstallUpdate = (downloadUrl: string, fileName: string) 
 // WeGame runtime diagnostics (PRD v1.4 §4.7)
 export const runWegameDiagnostics = (config?: any) =>
   invoke("run_wegame_diagnostics", config ? { config } : undefined);
+
+// WeGame installer (PRD v1.7 §4.1 step 5)
+export const getWegameInstallerInfo = (config?: any) =>
+  invoke("get_wegame_installer_info", config ? { config } : undefined);
+export const checkWegameInstalled = (config: any) =>
+  invoke("check_wegame_installed", { config });
+export const downloadWegameInstaller = (config: any) =>
+  invoke("download_wegame_installer", { config });
+export const runWegameInstaller = (config: any, installerPath: string) =>
+  invoke("run_wegame_installer", { config, installerPath });
+export const installWegame = (config: any, forceRedownload?: boolean) =>
+  invoke("install_wegame", { config, forceRedownload });
+export const clearWegameInstallerCache = (config?: any) =>
+  invoke("clear_wegame_installer_cache", config ? { config } : undefined);

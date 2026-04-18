@@ -116,6 +116,123 @@ export function resolveWineBackendEnv(config?: EnvironmentConfig): {
   return { env, protonDir, protonBin };
 }
 
+/**
+ * Ensure the wine prefix is fully initialized before any winetricks operation.
+ *
+ * Symptom we fight here (seen in logs/dependencies_20260418_153815.log):
+ *   wine: failed to open "C:\windows\syswow64\regedit.exe": c0000135
+ *
+ * Root cause: on a *brand new* prefix (or one created by the wizard's
+ * "initialize" step that only did `mkdir`), the Proton-bundled wine hasn't
+ * populated `syswow64/regedit.exe` yet, so winetricks fails the moment it
+ * tries to register a font with `wine64 regedit /S …`.
+ *
+ * Fix: if we can't see `syswow64/regedit.exe`, run `wineboot --init` with
+ * the exact same env that resolveWineBackendEnv produced, and wait for
+ * wineserver to settle. This is idempotent — subsequent runs are cheap
+ * because the file check short-circuits immediately.
+ */
+export async function ensureWinePrefixInitialized(
+  prefixPath: string,
+  env: Record<string, string>,
+  emitter?: { emitLog: (log: LogPayload) => void }
+): Promise<void> {
+  const prefix = expandPath(prefixPath);
+  const sentinel = path.join(prefix, "drive_c", "windows", "syswow64", "regedit.exe");
+  if (fs.existsSync(sentinel)) {
+    return; // already initialized — fast path
+  }
+
+  log.info(`[wineboot] prefix not initialized (missing ${sentinel}), running wineboot --init`);
+  emitter?.emitLog({
+    level: "info",
+    message: "首次初始化 Wine 前缀中，请稍候（这一步只做一次，可能需要 30 秒～1 分钟）...",
+    timestamp: new Date().toTimeString().slice(0, 8),
+  });
+
+  // Ensure prefix dir exists; wineboot will populate the rest.
+  fs.mkdirSync(prefix, { recursive: true });
+
+  const wineCmd = env.WINE || env.WINE64;
+  if (!wineCmd) {
+    throw new Error("内部错误：缺少 WINE 环境变量，无法初始化 prefix");
+  }
+
+  // Force WINEPREFIX onto the resolved absolute path.
+  const bootEnv: Record<string, string> = {
+    ...env,
+    WINEPREFIX: prefix,
+    // wineboot itself must NOT be muffled by -all or we'll lose useful errors
+    WINEDEBUG: env.WINEDEBUG || "-all",
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(wineCmd, ["wineboot", "--init"], {
+      env: bootEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let lastBytes = Date.now();
+    const onData = () => { lastBytes = Date.now(); };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+
+    // Hard cap at 3 minutes; if wineboot hasn't produced output for 60s, kill it.
+    const hardTimeout = setTimeout(() => {
+      log.warn("[wineboot] hard timeout after 180s, killing");
+      try { child.kill("SIGKILL"); } catch { /* noop */ }
+    }, 180_000);
+    const idleTimer = setInterval(() => {
+      if (Date.now() - lastBytes > 60_000) {
+        log.warn("[wineboot] idle > 60s, killing");
+        try { child.kill("SIGKILL"); } catch { /* noop */ }
+        clearInterval(idleTimer);
+      }
+    }, 10_000);
+
+    child.on("error", (err) => {
+      clearTimeout(hardTimeout);
+      clearInterval(idleTimer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(hardTimeout);
+      clearInterval(idleTimer);
+      if (code === 0 || fs.existsSync(sentinel)) {
+        // Even if exit code isn't zero, if regedit.exe is now present the
+        // init essentially succeeded — wineboot is known to exit non-zero
+        // on various harmless warnings.
+        resolve();
+      } else {
+        reject(new Error(`wineboot --init 失败（退出码 ${code}）`));
+      }
+    });
+  });
+
+  // Wait for wineserver to stop, so winetricks won't race against a still-
+  // starting prefix. `wineserver -w` blocks until everything quits.
+  const wineserver = env.WINESERVER;
+  if (wineserver && fs.existsSync(wineserver)) {
+    try {
+      await new Promise<void>((resolve) => {
+        const c = spawn(wineserver, ["-w"], { env: { ...env, WINEPREFIX: prefix }, stdio: "ignore" });
+        const to = setTimeout(() => { try { c.kill("SIGKILL"); } catch { /* noop */ } resolve(); }, 30_000);
+        c.on("close", () => { clearTimeout(to); resolve(); });
+        c.on("error", () => { clearTimeout(to); resolve(); });
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
+  log.info("[wineboot] prefix initialized");
+  emitter?.emitLog({
+    level: "info",
+    message: "Wine 前缀初始化完成",
+    timestamp: new Date().toTimeString().slice(0, 8),
+  });
+}
+
 interface DependencyDef {
   id: string;
   name: string;
@@ -125,15 +242,15 @@ interface DependencyDef {
   required: boolean;
 }
 
-// PRD v1.4: Dependency minimization strategy.
-// Only CJK + core fonts are recommended (required=true) by default because
-// they fix the most visible issue (garbled Chinese UI). Everything else is
-// opt-in: Proton-GE already bundles most vcrun / d3dx9; .NET on Wine is
-// notoriously unstable and is NOT needed by WeGame's C++/Qt core.
+// PRD v1.7: Dependency minimization strategy — ALL deps are opt-in.
+// Proton-GE already bundles corefonts/CJK rendering, vcrun, d3dx9 etc.,
+// and winetricks font installs frequently fail on fresh/older prefixes due
+// to WoW64 / regedit DLL issues (c0000135). Users should run WeGame first
+// and only come back here when a specific error occurs.
 const DEPENDENCY_DEFINITIONS: DependencyDef[] = [
-  // Recommended (default-checked)
-  { id: "font-microsoft-core", name: "Microsoft Core Fonts", category: "font", description: "Arial, Times New Roman and other base English fonts (recommended)", size_mb: 8, required: true },
-  { id: "font-cjk", name: "CJK Support Fonts (CJKfonts)", category: "font", description: "CJK fonts, fixes garbled Chinese UI in WeGame (strongly recommended)", size_mb: 25, required: true },
+  // Fonts (Proton-GE already renders CJK correctly; install only when UI shows squares)
+  { id: "font-microsoft-core", name: "Microsoft Core Fonts", category: "font", description: "Arial / Times New Roman base English fonts; install only when English fonts misrender", size_mb: 8, required: false },
+  { id: "font-cjk", name: "CJK Support Fonts (CJKfonts)", category: "font", description: "Chinese/Japanese/Korean fonts; Proton-GE usually renders CJK fine, install only when squares/garbled text appears", size_mb: 25, required: false },
   // On-demand (.NET — unstable on Wine, install only on explicit error)
   { id: "dotnet46", name: ".NET Framework 4.6", category: "dotnet", description: "On-demand only; .NET is unstable on Wine", size_mb: 180, required: false },
   { id: "dotnet48", name: ".NET Framework 4.8", category: "dotnet", description: "On-demand only; .NET is unstable on Wine", size_mb: 200, required: false },
@@ -500,6 +617,31 @@ export async function installDependencies(
     emitter.emitProgress({
       current_dependency: "",
       current_step: "无法启动依赖安装",
+      progress_percent: 0,
+      total_steps: selectedIds.length,
+      completed_steps: 0,
+      status: "error",
+      error_message: msg,
+    });
+    throw err;
+  }
+
+  // Ensure wine prefix is actually initialized (syswow64/regedit.exe present).
+  // Without this, winetricks fails with c0000135 (DLL_NOT_FOUND) on the first
+  // register-font step — a class of bug users would never diagnose themselves.
+  try {
+    await ensureWinePrefixInitialized(winePrefixPath, backendEnv, emitter);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error(`wineboot --init failed: ${msg}`);
+    emitter.emitLog({
+      level: "error",
+      message: `初始化 Wine 前缀失败：${msg}`,
+      timestamp: new Date().toTimeString().slice(0, 8),
+    });
+    emitter.emitProgress({
+      current_dependency: "",
+      current_step: "初始化 Wine 前缀失败",
       progress_percent: 0,
       total_steps: selectedIds.length,
       completed_steps: 0,

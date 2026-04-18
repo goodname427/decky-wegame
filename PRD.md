@@ -6,7 +6,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **最后更新**：2026-04-18（v1.6）
+- **最后更新**：2026-04-18（v1.7）
 
 ---
 
@@ -51,7 +51,7 @@
 
 ### 4.1 环境设置向导（SetupWizard）
 
-向导共 **4 个步骤**，每步独立切换，支持「上一步」「下一步」「跳过向导」。
+向导共 **5 个步骤**，每步独立切换，支持「上一步」「下一步」「跳过向导」。
 
 #### 步骤 1：确认中间层
 - **检测对象**：Wine、winetricks、Proton 兼容层
@@ -78,20 +78,23 @@
 
 | 分组 | 项目 | 默认状态 | 说明 |
 |------|------|---------|------|
-| **推荐** | `corefonts` | ✅ 默认勾选 | 解决 WeGame 界面中文方块问题（Proton-GE 已含，但会做存在性判断） |
-| **推荐** | `font-cjk` / `cjkfonts` | ✅ 默认勾选 | 中日韩字体，WeGame 中文界面显示必备 |
+| **按需** | `corefonts` | ⬜ 默认不勾 | Proton-GE 已内置；仅当 WeGame 英文界面出现字体异常时再装 |
+| **按需** | `font-cjk` / `cjkfonts` | ⬜ 默认不勾 | Proton-GE 通常已能正常显示中文；仅在出现方块 / 乱码时再装（新版 winetricks 在未初始化 prefix 上易跳 c0000135） |
 | **按需** | `riched20` / `riched30` | ⬜ 默认不勾 | 富文本控件，登录页/聊天页若异常时再补 |
 | **按需** | `dotnet46` / `dotnet48` | ⬜ 默认不勾 | **仅当 WeGame 提示缺 .NET 或具体子功能报错时**再勾选安装 |
 | **按需** | `vcrun*` | ⬜ 默认不勾 | Proton-GE 已自带，一般无需单独安装 |
 | **按需** | `directx9` (`d3dx9`) | ⬜ 默认不勾 | Proton-GE 已自带 |
 | **按需** | `ie8` / `mscoree` / `gdiplus` | ⬜ 默认不勾 | 仅在特定报错时补装 |
 
+> **v1.7 调整**：取消了原来 `corefonts` / `cjkfonts` 的「推荐默认勾选」状态。现实日志表明：在 Steam Deck
+> 的新建 prefix + GE-Proton7-20 环境下，winetricks 新版安装字体时会因 `syswow64\regedit.exe` 未初始化而跳
+> `c0000135 (DLL_NOT_FOUND)`，并且 Proton-GE 本身已能正常渲染中文，**默认装这两个字体弊大于利**。
+
 **UI 要求**：
 - 页面顶部明显展示一条提示条：「🎯 推荐策略：先尝试直接运行 WeGame，遇到具体报错再来此处补装对应依赖」
-- 提供「**一键全选（完整安装）**」按钮（老派用户兜底）
-- 提供「**恢复推荐**」按钮（只勾"推荐"分组）
+- 提供「**一键全选（完整安装）**」按钮（老派用户兑底）
+- 提供「**恢复推荐**」按钮：v1.7 起此按钮会取消全部勾选（由于已取消推荐分组），鼓励用户进入第 5 步先试运行 WeGame
 - 每个依赖项点击可展开**详细说明**（解决什么问题、失败常见原因）
-
 **跳过依赖安装**：允许用户在步骤 2 直接"跳过依赖安装"进入步骤 3，**不再强制要求装依赖**。
 
 #### 步骤 3：路径选择
@@ -106,10 +109,60 @@
 - 点击「开始安装」后：
   1. 保存环境配置
   2. 初始化 Wine Prefix
-  3. 检测 winetricks 是否可用：
+  3. **基础初始化兜底（v1.7 新增）**：检测 `<prefix>/drive_c/windows/syswow64/regedit.exe` 是否存在；
+     不存在则自动调用 `wine64 wineboot --init`，避免后续 winetricks 安装字体/依赖时挖到
+     `c0000135 (DLL_NOT_FOUND)` 坑（实际日志表明：新建 prefix + GE-Proton7-20 新版 winetricks 必踩）。
+  4. 检测 winetricks 是否可用：
      - 不可用 → **弹出密码输入弹窗**（见 4.1.1）
      - 可用 → 直接开始依赖安装
 - 安装过程展示进度条、当前步骤、完成步骤数
+- 安装完成后，向导**自动推进到步骤 5**（如用户已使用「跳过向导」全局跳过则不推进）。
+
+#### 步骤 5：安装 WeGame（v1.7 新增）
+
+**背景**：v1.6 之前向导完成后，WeGame 本体仍然不存在于 prefix 中，用户点「启动」必失败（`WeGame executable not
+found`）且没有任何引导。v1.7 将「安装 WeGame 本体」作为向导的必要收尾步骤。
+
+- **自动检测**：进入该步后立即调用 `check_wegame_installed`、搜索以下路径：
+  - `<prefix>/drive_c/Program Files/Tencent/WeGame/WeGameLauncher.exe`
+  - `<prefix>/drive_c/Program Files (x86)/Tencent/WeGame/WeGameLauncher.exe`
+  - `<prefix>/drive_c/Program Files/Tencent/WeGame/WeGame.exe`
+  - 用户自定义的 `wegame_install_path`
+- **已安装**：展示绿色「已安装」卡片 + 完整可执行文件路径；提供「重新下载并安装」按钮（用于覆盖安装或升级）。
+- **未安装**：展示黄色提示卡 + 「下载并安装 WeGame」主按钮。
+- **安装流程**：点击主按钮后调用 `install_wegame`，后端会：
+  1. 如本地缓存（`~/.cache/decky-wegame/installers/WeGameSetup.exe`）不存在或不完整，从腾讯官方
+     `https://dldir1.qq.com/WeGame/Setup/WeGameSetup.exe` 下载，进度映射到 0～95%。支持用户通过
+     `extra_env_vars.WEGAME_INSTALLER_URL` 自定义官方楕代源。
+  2. 调用 `resolveWineBackendEnv()`、再运行 `ensureWinePrefixInitialized()`、最后 `spawn(wine64, "WeGameSetup.exe")`。
+  3. 安装器 GUI 弹出后以 5 秒一次的心跳推进条（上限 80%），状态文案提示「请在安装向导里完成所有步骤」。
+  4. 安装器进程退出后，再次调用 `isWegameInstalled`；找到可执行文件则进度 100% 并标记成功；未找到则判为失败，
+     给出「您可能在向导里取消了安装，请重试」或「退出码异常 + 请查看日志」提示。
+- **失败恢复**：错误卡提供「重试」、「清缓存并重新下载」两个动作。
+- **日志**：使用独立的 `installerLogger`（输出到 `logs/installer_*.log`），方便与依赖安装日志区别。
+- **跳过**：任何时候点右下角「稍后安装并完成」或「完成」都允许结束向导，仅在 `wegameInstalled===true` 时按钮文案为「完成」。
+
+**IPC 接口**（已暴露给前端 `src/utils/api.ts`）：
+
+| IPC 名 | 说明 |
+|--------|------|
+| `get_wegame_installer_info` | 返回缓存路径/是否已缓存/大小/默认下载 URL |
+| `check_wegame_installed` | 检查 prefix 中是否已有 WeGameLauncher.exe |
+| `download_wegame_installer` | 仅下载安装器，不运行 |
+| `run_wegame_installer` | 运行指定路径的安装器（支持用户选本地文件） |
+| `install_wegame` | 一键「下载 + 安装」（此章节向导使用的入口） |
+| `clear_wegame_installer_cache` | 清理本地安装器缓存 |
+
+所有进度通过 `wegame-install-progress` 事件广播，结构：
+
+```ts
+{
+  phase: "download" | "install" | "done" | "error";
+  percent: number;        // 0-100
+  message?: string;       // 用户可见的状态文案
+  error?: string;         // 仅在 phase="error" 时有值
+}
+```
 
 #### 4.1.1 密码输入弹窗（sudo 权限获取）
 - **触发条件**：安装 winetricks 时需要 sudo 权限

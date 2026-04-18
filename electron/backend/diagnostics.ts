@@ -20,6 +20,7 @@ import dns from "dns";
 import { promisify } from "util";
 import { EnvironmentConfig } from "./types";
 import { expandPath } from "./environment";
+import { scanProtonVersions, getDefaultProtonPath } from "./proton";
 import { depsLogger as log } from "./logger";
 
 const dnsResolve4 = promisify(dns.resolve4);
@@ -304,7 +305,27 @@ async function checkWegameLog(config?: EnvironmentConfig): Promise<DiagnosticRes
 
 async function checkProtonVersion(config?: EnvironmentConfig): Promise<DiagnosticResult> {
   const started = Date.now();
-  const protonPath = config?.proton_path ? expandPath(config.proton_path) : undefined;
+  let protonPath = config?.proton_path ? expandPath(config.proton_path) : undefined;
+  let autoDetected = false;
+
+  // Fallback: if the UI hasn't loaded config yet (proton_path empty), or the
+  // stored path has gone stale (user removed that Proton), auto-detect the
+  // same way resolveWineBackendEnv() does — otherwise the diagnostics panel
+  // spuriously screams "找不到 Proton" while dependency install is happily
+  // using the scanned default.
+  if (!protonPath || !fs.existsSync(protonPath)) {
+    try {
+      const versions = scanProtonVersions();
+      const auto = getDefaultProtonPath(versions);
+      if (auto && fs.existsSync(auto)) {
+        protonPath = auto;
+        autoDetected = true;
+      }
+    } catch {
+      // scan failure → keep undefined, will fall through to fail branch below
+    }
+  }
+
   if (!protonPath || !fs.existsSync(protonPath)) {
     return {
       id: "proton-version",
@@ -331,12 +352,13 @@ async function checkProtonVersion(config?: EnvironmentConfig): Promise<Diagnosti
   // Heuristic: GE-Proton7 / Proton 7.x is known-old and often causes issues
   // with WeGame (Proton-GE 8.x / 9.x are the community-recommended baseline).
   const isOld = /(?:^|[^0-9])7\b/.test(version) || /wine-7\./.test(version);
+  const versionLabel = autoDetected ? `${version}（自动检测）` : version;
   if (isOld) {
     return {
       id: "proton-version",
       title: "Proton 版本",
       status: "warn",
-      message: `当前 Proton 版本偏旧：${version}`,
+      message: `当前 Proton 版本偏旧：${versionLabel}`,
       suggestion: "建议升级到 GE-Proton 8.x 或 9.x 以获得更好的 WeGame 兼容性",
       elapsedMs,
     };
@@ -345,7 +367,7 @@ async function checkProtonVersion(config?: EnvironmentConfig): Promise<Diagnosti
     id: "proton-version",
     title: "Proton 版本",
     status: "pass",
-    message: version,
+    message: versionLabel,
     elapsedMs,
   };
 }

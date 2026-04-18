@@ -1,5 +1,13 @@
 import { useState, useEffect } from "react";
-import { invoke, installWinetricks, startInstallDependencies } from "../utils/api";
+import {
+  invoke,
+  installWinetricks,
+  startInstallDependencies,
+  installWegame as apiInstallWegame,
+  checkWegameInstalled,
+  clearWegameInstallerCache,
+  listen,
+} from "../utils/api";
 import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2, Download, Edit3, ExternalLink, SkipForward } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
@@ -14,6 +22,7 @@ const STEPS = [
   { id: 2, title: "确认依赖", icon: ListChecks },
   { id: 3, title: "路径选择", icon: FolderCog },
   { id: 4, title: "执行安装", icon: Rocket },
+  { id: 5, title: "安装 WeGame", icon: PackageIcon },
 ];
 
 function Cpu({ className }: { className?: string }) {
@@ -30,6 +39,9 @@ function RocketIcon({ className }: { className?: string }) {
 }
 function ShieldCheck({ className }: { className?: string }) {
   return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>;
+}
+function PackageIcon({ className }: { className?: string }) {
+  return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>;
 }
 
 interface SetupWizardProps {
@@ -77,6 +89,16 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [scanned, setScanned] = useState(false);
   const [depStates, setDepStates] = useState<Record<string, DepState>>({});
 
+  // Step 5: WeGame installer state (PRD v1.7 §4.1 step 5)
+  type WegameInstallPhase = "idle" | "download" | "install" | "done" | "error";
+  const [wegameInstalled, setWegameInstalled] = useState<boolean | null>(null);
+  const [wegameExePath, setWegameExePath] = useState<string | null>(null);
+  const [wegameInstalling, setWegameInstalling] = useState(false);
+  const [wegamePhase, setWegamePhase] = useState<WegameInstallPhase>("idle");
+  const [wegamePercent, setWegamePercent] = useState(0);
+  const [wegameMessage, setWegameMessage] = useState<string>("");
+  const [wegameError, setWegameError] = useState<string | null>(null);
+
   const { versions: protonVersions, loading: protonLoading } = useProtonVersions();
   const { config, systemInfo, saveEnvironment } = useEnvironment();
   const { progress, logs } = useInstallProgress();
@@ -95,6 +117,62 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       runScan();
     }
   }, [open]);
+
+  // Subscribe to WeGame installer progress events (PRD v1.7 §4.1 step 5)
+  useEffect(() => {
+    const unsub = listen<{
+      phase: WegameInstallPhase;
+      percent: number;
+      message?: string;
+      error?: string;
+    }>("wegame-install-progress", (p) => {
+      if (p.phase === "error") {
+        setWegameError(p.error || p.message || "安装失败");
+        setWegamePhase("error");
+      } else {
+        setWegamePhase(p.phase);
+        setWegameError(null);
+      }
+      if (typeof p.percent === "number") setWegamePercent(p.percent);
+      if (p.message) setWegameMessage(p.message);
+    });
+    return () => unsub();
+  }, []);
+
+  // Auto-advance from step 4 to step 5 when dependency install completes.
+  useEffect(() => {
+    if (currentStep === 4 && progress.status === "completed" && !globalSkipped) {
+      // Pre-check so the step-5 panel can render the right CTA immediately
+      (async () => {
+        if (localConfig) {
+          try {
+            const r = (await checkWegameInstalled(localConfig)) as { installed: boolean; exePath?: string };
+            setWegameInstalled(r.installed);
+            setWegameExePath(r.exePath ?? null);
+          } catch {
+            setWegameInstalled(false);
+          }
+        }
+        setCurrentStep(5);
+      })();
+    }
+  }, [progress.status, currentStep, globalSkipped, localConfig]);
+
+  // When user arrives at step 5 directly (e.g. re-opening wizard), still
+  // check installation state.
+  useEffect(() => {
+    if (currentStep === 5 && wegameInstalled === null && localConfig) {
+      (async () => {
+        try {
+          const r = (await checkWegameInstalled(localConfig)) as { installed: boolean; exePath?: string };
+          setWegameInstalled(r.installed);
+          setWegameExePath(r.exePath ?? null);
+        } catch {
+          setWegameInstalled(false);
+        }
+      })();
+    }
+  }, [currentStep, localConfig, wegameInstalled]);
 
   async function runScan() {
     setScanning(true);
@@ -224,6 +302,48 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     onClose();
   }
 
+  // --- Step 5 handlers (WeGame installer) ---------------------------------
+  async function handleInstallWegame(forceRedownload = false) {
+    if (!localConfig) return;
+    setWegameInstalling(true);
+    setWegameError(null);
+    setWegameMessage(forceRedownload ? "准备重新下载安装器..." : "准备开始...");
+    setWegamePhase("download");
+    setWegamePercent(0);
+    try {
+      const res = (await apiInstallWegame(localConfig, forceRedownload)) as {
+        success: boolean;
+        exePath?: string;
+        error?: string;
+      };
+      if (res.success) {
+        setWegameInstalled(true);
+        setWegameExePath(res.exePath ?? null);
+        setWegamePhase("done");
+        setWegamePercent(100);
+        setWegameMessage(res.exePath ? `WeGame 已安装到：${res.exePath}` : "WeGame 已安装");
+      } else {
+        setWegameError(res.error || "安装失败");
+        setWegamePhase("error");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setWegameError(msg);
+      setWegamePhase("error");
+    } finally {
+      setWegameInstalling(false);
+    }
+  }
+
+  async function handleReinstallWegame() {
+    try {
+      await clearWegameInstallerCache(localConfig ?? undefined);
+    } catch {
+      // best-effort
+    }
+    await handleInstallWegame(true);
+  }
+
   function canProceed() {
     switch (currentStep) {
       case 1: {
@@ -235,6 +355,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       case 2: return true; // Proton auto-selects if none chosen
       case 3: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
       case 4: return selectedDeps.length > 0;
+      case 5: return true; // always allowed — WeGame install step is optional
       default: return true;
     }
   }
@@ -730,7 +851,162 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
             )}
           </div>
         )}
+
+        {currentStep === 5 && (
+          <div className="space-y-5">
+            <div className="text-center">
+              <h3 className="text-lg font-semibold text-gray-100">安装 WeGame</h3>
+              <p className="mt-1 text-sm text-gray-400">
+                最后一步：把腾讯 WeGame 本体安装到我们刚刚配置好的 Wine 环境中。
+              </p>
+            </div>
+
+            {/* Current install state card */}
+            {wegameInstalled === null && (
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-white/5 bg-white/5 p-4 text-sm text-gray-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在检测当前环境中是否已安装 WeGame...
+              </div>
+            )}
+
+            {wegameInstalled === true && wegamePhase !== "error" && !wegameInstalling && (
+              <div className="rounded-lg border border-neon-green/20 bg-neon-green/5 p-5">
+                <div className="flex items-start gap-3">
+                  <CheckCircle className="h-6 w-6 flex-shrink-0 text-neon-green" />
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-neon-green">WeGame 已安装</h4>
+                    {wegameExePath && (
+                      <p className="mt-1 break-all text-xs text-gray-400">
+                        可执行文件：<code className="text-gray-300">{wegameExePath}</code>
+                      </p>
+                    )}
+                    <p className="mt-2 text-xs text-gray-400">
+                      您可以直接点击右下角「完成」结束向导，之后在「启动器」页启动 WeGame。
+                    </p>
+                    <div className="mt-3">
+                      <button
+                        onClick={handleReinstallWegame}
+                        disabled={wegameInstalling}
+                        className="neon-secondary flex items-center gap-1.5 text-xs disabled:opacity-30"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        重新下载并安装（如需覆盖/升级）
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {wegameInstalled === false && !wegameInstalling && wegamePhase !== "done" && (
+              <div className="rounded-lg border border-neon-yellow/20 bg-neon-yellow/5 p-5">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-6 w-6 flex-shrink-0 text-neon-yellow" />
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-neon-yellow">尚未安装 WeGame</h4>
+                    <p className="mt-1 text-sm text-gray-300">
+                      点击下方按钮，我们会自动下载腾讯官方 WeGame 安装程序，并在您配置好的 Wine 环境里运行它。
+                    </p>
+                    <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs text-gray-400">
+                      <li>安装器会以图形界面弹出，请在里面完成"下一步/同意/安装"等常规步骤</li>
+                      <li>安装器完成后，我们会自动校验 WeGameLauncher.exe 是否就位</li>
+                      <li>下载到本地缓存（<code className="text-gray-300">~/.cache/decky-wegame/installers</code>），下次重装可跳过下载</li>
+                    </ul>
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={() => handleInstallWegame(false)}
+                    disabled={wegameInstalling}
+                    className="neon-primary text-base px-8 py-3 flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    下载并安装 WeGame
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* In-flight progress */}
+            {wegameInstalling && (
+              <div className="space-y-4 pt-2">
+                <ProgressBar
+                  percent={wegamePercent}
+                  label={
+                    wegamePhase === "download"
+                      ? "正在下载 WeGame 安装器..."
+                      : wegamePhase === "install"
+                      ? "正在运行 WeGame 安装器..."
+                      : "处理中..."
+                  }
+                />
+                {wegameMessage && (
+                  <div className="rounded-lg border border-white/5 bg-white/5 p-3 text-center text-xs text-gray-400">
+                    {wegameMessage}
+                  </div>
+                )}
+                {wegamePhase === "install" && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-gray-300">
+                    💡 WeGame 安装向导将在桌面弹出。请点击「下一步」→「同意」→「安装」完成流程。
+                    如果窗口看起来没反应，请稍等十几秒等待 Wine 启动。
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Error */}
+            {wegamePhase === "error" && wegameError && (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-5">
+                <div className="flex items-start gap-3">
+                  <XCircle className="h-6 w-6 flex-shrink-0 text-red-400" />
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-red-300">安装失败</h4>
+                    <p className="mt-1 break-words text-sm text-gray-300">{wegameError}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleInstallWegame(false)}
+                        disabled={wegameInstalling}
+                        className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-30"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        重试
+                      </button>
+                      <button
+                        onClick={handleReinstallWegame}
+                        disabled={wegameInstalling}
+                        className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-30"
+                      >
+                        <Download className="h-4 w-4" />
+                        清缓存并重新下载
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Done banner (fresh install success) */}
+            {wegamePhase === "done" && wegameInstalled && (
+              <div className="rounded-lg border border-neon-green/20 bg-neon-green/5 p-6 text-center">
+                <Check className="mx-auto mb-3 h-10 w-10 text-neon-green" />
+                <h4 className="font-semibold text-neon-green">WeGame 安装完成！</h4>
+                <p className="mt-1 text-sm text-gray-400">
+                  现在可以关闭向导，回到「启动器」页点击「启动 WeGame」。
+                </p>
+              </div>
+            )}
+
+            {/* Manual skip hint */}
+            {!wegameInstalling && (
+              <div className="rounded-lg border border-white/5 bg-white/5 p-3 text-xs text-gray-400">
+                📦 也可以选择跳过此步：如果您已手动把 WeGame 文件放在 Wine 前缀下的 <code className="text-gray-300">drive_c/Program Files/Tencent/WeGame/</code>，
+                直接点击右下角「完成」即可。
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
 
       {/* Navigation */}
       <div className="flex items-center justify-between">
@@ -753,28 +1029,29 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         </div>
 
         <div className="text-xs text-gray-500">
-          步骤 {currentStep} / 4
+          步骤 {currentStep} / {totalSteps}
         </div>
 
         <div className="flex items-center gap-2">
-          {progress.status === "completed" && (
+          {currentStep === 5 && (
             <button
               onClick={onClose}
               className="neon-primary flex items-center gap-1.5 text-sm"
             >
-              完成
+              <Check className="h-4 w-4" />
+              {wegameInstalled ? "完成" : "稍后安装并完成"}
             </button>
           )}
-          {currentStep < totalSteps && progress.status !== "completed" ? (
+          {currentStep < totalSteps && (
             <button
               onClick={() => setCurrentStep(currentStep + 1)}
-              disabled={!canProceed()}
+              disabled={!canProceed() || (currentStep === 4 && progress.status !== "completed")}
               className="neon-primary flex items-center gap-1.5 text-sm disabled:opacity-30"
             >
               下一步
               <ChevronRight className="h-4 w-4" />
             </button>
-          ) : null}
+          )}
         </div>
       </div>
         </div>

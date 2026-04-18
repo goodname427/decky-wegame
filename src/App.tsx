@@ -33,6 +33,14 @@ export default function App() {
     checkFirstRun();
   }, []);
 
+  // Allow any descendant (e.g. Launcher error banner) to request the wizard
+  // without threading callbacks through every Route/props layer.
+  useEffect(() => {
+    const handler = () => setShowSetupWizard(true);
+    window.addEventListener("open-setup-wizard", handler);
+    return () => window.removeEventListener("open-setup-wizard", handler);
+  }, []);
+
   // Don't render until we've checked first-run status
   if (!checkedFirstRun) {
     return (
