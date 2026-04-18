@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Github,
   Heart,
@@ -8,13 +9,9 @@ import {
   Bug,
   Info,
   ArrowUpCircle,
-  Loader2,
-  CheckCircle,
 } from "lucide-react";
 import useEnvironment from "../hooks/useEnvironment";
-import { invoke } from "../utils/api";
 import { FAQ_ITEMS, APP_NAME, APP_VERSION } from "../utils/constants";
-import type { UpdateInfo } from "../types";
 
 function FAQItem({ question, answer }: { question: string; answer: string }) {
   const [open, setOpen] = useState(false);
@@ -39,20 +36,10 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
 
 export default function About() {
   const { systemInfo } = useEnvironment();
-  const [quickChecking, setQuickChecking] = useState(false);
-  const [quickUpdateInfo, setQuickUpdateInfo] = useState<UpdateInfo | null>(null);
+  const navigate = useNavigate();
 
-  async function quickCheckUpdate() {
-    setQuickChecking(true);
-    setQuickUpdateInfo(null);
-    try {
-      const info = (await invoke("check_for_update", { channel: "stable" })) as UpdateInfo;
-      setQuickUpdateInfo(info);
-    } catch {
-      // Silently fail for quick check
-    } finally {
-      setQuickChecking(false);
-    }
+  function goToUpdateTab() {
+    navigate("/settings", { state: { activeTab: "update" } });
   }
 
   return (
@@ -77,37 +64,13 @@ export default function About() {
 
         {/* Quick update check */}
         <div className="mt-4">
-          {quickUpdateInfo ? (
-            quickUpdateInfo.has_update ? (
-              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs">
-                <ArrowUpCircle className="h-3.5 w-3.5 text-primary" />
-                <span className="text-primary">新版本 {quickUpdateInfo.latest_version} 可用</span>
-                {quickUpdateInfo.html_url && (
-                  <a href={quickUpdateInfo.html_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-light underline">
-                    查看
-                  </a>
-                )}
-              </div>
-            ) : (
-              <div className="inline-flex items-center gap-1.5 text-xs text-neon-green">
-                <CheckCircle className="h-3.5 w-3.5" />
-                已是最新版本
-              </div>
-            )
-          ) : (
-            <button
-              onClick={quickCheckUpdate}
-              disabled={quickChecking}
-              className="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-primary transition-colors"
-            >
-              {quickChecking ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <ArrowUpCircle className="h-3.5 w-3.5" />
-              )}
-              {quickChecking ? "检查中..." : "检查更新"}
-            </button>
-          )}
+          <button
+            onClick={goToUpdateTab}
+            className="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-primary transition-colors"
+          >
+            <ArrowUpCircle className="h-3.5 w-3.5" />
+            检查更新
+          </button>
         </div>
 
         <div className="mt-6 flex justify-center gap-3">

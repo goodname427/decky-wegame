@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { PackageCheck, Settings as SettingsIcon, Download, Settings2 } from "lucide-react";
 import Dependencies from "./Dependencies";
 import Settings from "./Settings";
@@ -11,7 +12,19 @@ interface SettingsPageProps {
 }
 
 export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState<SubTab>("dependencies");
+  
+  // Handle navigation state from About page
+  useEffect(() => {
+    if (location.state?.activeTab) {
+      setActiveTab(location.state.activeTab);
+    }
+  }, [location.state]);
+  
+  const handleTabChange = (tab: SubTab) => {
+    setActiveTab(tab);
+  };
 
   const tabs: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: "dependencies", label: "依赖管理", icon: PackageCheck },
