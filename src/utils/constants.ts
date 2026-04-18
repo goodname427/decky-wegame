@@ -21,78 +21,14 @@ export const WEGAME_DEFAULT_INSTALL_PATH =
   "~/.local/share/decky-wegame/prefix/drive_c/Program Files/Tencent/WeGame";
 
 export const DEPENDENCY_LIST: Omit<DependencyItem, "installed" | "install_time">[] = [
-  // .NET Framework
-  {
-    id: "dotnet46",
-    name: ".NET Framework 4.6",
-    category: "dotnet",
-    description: "WeGame 核心运行时依赖",
-    size_mb: 180,
-    required: true,
-  },
-  {
-    id: "dotnet48",
-    name: ".NET Framework 4.8",
-    category: "dotnet",
-    description: "最新版 .NET Framework 运行时（推荐）",
-    size_mb: 200,
-    required: true,
-  },
-  // Visual C++ Redistributable
-  {
-    id: "vcpp2005",
-    name: "Visual C++ 2005 Redistributable",
-    category: "vcpp",
-    description: "部分旧组件依赖的 VC++ 运行时",
-    size_mb: 6,
-    required: false,
-  },
-  {
-    id: "vcpp2008",
-    name: "Visual C++ 2008 Redistributable",
-    category: "vcpp",
-    description: "部分游戏组件依赖",
-    size_mb: 9,
-    required: true,
-  },
-  {
-    id: "vcpp2010",
-    name: "Visual C++ 2010 Redistributable",
-    category: "vcpp",
-    description: "广泛使用的 VC++ 运行时版本",
-    size_mb: 11,
-    required: true,
-  },
-  {
-    id: "vcpp2012",
-    name: "Visual C++ 2012 Redistributable",
-    category: "vcpp",
-    description: "部分游戏和工具依赖",
-    size_mb: 12,
-    required: true,
-  },
-  {
-    id: "vcpp2013",
-    name: "Visual C++ 2013 Redistributable",
-    category: "vcpp",
-    description: "常用 VC++ 运行时",
-    size_mb: 13,
-    required: true,
-  },
-  {
-    id: "vcpp2015-2022",
-    name: "Visual C++ 2015-2022 (x64)",
-    category: "vcpp",
-    description: "最新版 VC++ 运行时集合包",
-    size_mb: 35,
-    required: true,
-  },
-  // Fonts
+  // ========================================================================
+  // 推荐（默认勾选）：解决 WeGame 中文界面显示问题
+  // ========================================================================
   {
     id: "font-microsoft-core",
     name: "Microsoft Core Fonts",
     category: "font",
-    description: "Arial、Times New Roman 等基础字体",
+    description: "Arial、Times New Roman 等基础英文字体（推荐）",
     size_mb: 8,
     required: true,
   },
@@ -100,49 +36,128 @@ export const DEPENDENCY_LIST: Omit<DependencyItem, "installed" | "install_time">
     id: "font-cjk",
     name: "CJK Support Fonts (CJKfonts)",
     category: "font",
-    description: "中日韩文字支持字体，解决中文乱码问题",
+    description: "中日韩字体，解决 WeGame 界面中文方块问题（强烈推荐）",
     size_mb: 25,
     required: true,
   },
-  // Browser / Web components
+
+  // ========================================================================
+  // 按需（默认不勾选）：Proton-GE 已内置，或仅在特定报错时补装
+  //   策略说明（PRD §4.1 步骤2）：WeGame 主体是 C++/Qt，不依赖 .NET；
+  //   Proton-GE 已内置 vcrun/d3dx9 等常用依赖，重复安装无意义且易失败。
+  //   按需依赖仅当 WeGame 运行时报具体错误时，再由用户手动勾选安装。
+  // ========================================================================
+
+  // .NET Framework（Wine 下不稳定，按需安装）
+  {
+    id: "dotnet46",
+    name: ".NET Framework 4.6",
+    category: "dotnet",
+    description: "⚠️ Wine 下不稳定，仅在 WeGame 提示缺 .NET 时勾选",
+    size_mb: 180,
+    required: false,
+  },
+  {
+    id: "dotnet48",
+    name: ".NET Framework 4.8",
+    category: "dotnet",
+    description: "⚠️ Wine 下不稳定，仅在 WeGame 提示缺 .NET 时勾选",
+    size_mb: 200,
+    required: false,
+  },
+
+  // Visual C++ Redistributable（Proton-GE 已自带，通常无需安装）
+  {
+    id: "vcpp2005",
+    name: "Visual C++ 2005 Redistributable",
+    category: "vcpp",
+    description: "Proton-GE 已自带；仅在旧组件报错时补装",
+    size_mb: 6,
+    required: false,
+  },
+  {
+    id: "vcpp2008",
+    name: "Visual C++ 2008 Redistributable",
+    category: "vcpp",
+    description: "Proton-GE 已自带；仅在组件报错时补装",
+    size_mb: 9,
+    required: false,
+  },
+  {
+    id: "vcpp2010",
+    name: "Visual C++ 2010 Redistributable",
+    category: "vcpp",
+    description: "Proton-GE 已自带；仅在组件报错时补装",
+    size_mb: 11,
+    required: false,
+  },
+  {
+    id: "vcpp2012",
+    name: "Visual C++ 2012 Redistributable",
+    category: "vcpp",
+    description: "Proton-GE 已自带；仅在组件报错时补装",
+    size_mb: 12,
+    required: false,
+  },
+  {
+    id: "vcpp2013",
+    name: "Visual C++ 2013 Redistributable",
+    category: "vcpp",
+    description: "Proton-GE 已自带；仅在组件报错时补装",
+    size_mb: 13,
+    required: false,
+  },
+  {
+    id: "vcpp2015-2022",
+    name: "Visual C++ 2015-2022 (x64)",
+    category: "vcpp",
+    description: "Proton-GE 已自带；仅在组件报错时补装",
+    size_mb: 35,
+    required: false,
+  },
+
+  // Browser / Web 组件（按需）
   {
     id: "ie8",
     name: "Internet Explorer 8",
     category: "browser",
-    description: "WeGame 内嵌浏览器依赖的 IE 内核组件",
+    description: "仅在 WeGame 内嵌浏览器页面异常时安装",
     size_mb: 150,
-    required: true,
+    required: false,
   },
-  // System components
+
+  // System 组件（按需）
   {
     id: "gdiplus",
     name: "GDI+ (gdiplus)",
     category: "system",
-    description: "Windows 图形设备接口库",
+    description: "Windows 图形库，仅在界面绘制异常时补装",
     size_mb: 3,
-    required: true,
+    required: false,
   },
   {
     id: "mscoree",
     name: ".NET Core Runtime (mscoree)",
     category: "system",
-    description: ".NET Framework 核心执行引擎",
+    description: "仅在 .NET 相关报错时补装",
     size_mb: 2,
-    required: true,
+    required: false,
   },
   {
     id: "directx9",
     name: "DirectX 9.0c (d3dx9)",
     category: "system",
-    description: "DirectX 9 运行时库，部分游戏需要",
+    description: "Proton-GE 已自带；仅在旧游戏报缺 d3dx9 时补装",
     size_mb: 50,
-    required: true,
+    required: false,
   },
+
+  // Other（按需）
   {
     id: "vcrun6",
     name: "Visual Basic 6 Runtime (vcrun6)",
     category: "other",
-    description: "VB6 运行时兼容层",
+    description: "VB6 兼容层，仅在 WeGame 内置组件报错时补装",
     size_mb: 5,
     required: false,
   },
@@ -152,7 +167,7 @@ export const FAQ_ITEMS = [
   {
     question: "WeGame 安装或启动卡在 0% 怎么办？",
     answer:
-      "这通常是因为依赖未安装完整。请在「依赖管理」页面检查并安装所有必需组件，特别是 .NET Framework 和 IE 内核组件。如果仍然卡住，尝试在设置中重置 Wine Prefix 后重新初始化环境。",
+      "这类问题通常与「依赖缺失」无关，而是 WeGame 自带下载器（TenioDL）在 Wine 下无法访问腾讯 CDN。请先打开「依赖管理 → WeGame 运行诊断」查看网络连通性、DNS、TLS 证书等检测结果。常见解决方式：切换 DNS 为 119.29.29.29（DNSPod）、更新系统 ca-certificates、或升级到 GE-Proton 8.x 以上版本。",
   },
   {
     question: "哪些游戏可以在 Steam Deck 上正常运行？",

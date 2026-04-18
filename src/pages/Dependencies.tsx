@@ -16,12 +16,15 @@ import {
   Copy,
   Check,
   Save,
+  Activity,
 } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import LogViewer from "../components/LogViewer";
 import ConfirmDialog from "../components/ConfirmDialog";
+import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import { useEnvironment, useProtonVersions } from "../hooks/useEnvironment";
 import { useInstallProgress } from "../hooks/useInstallProgress";
+import { DEPENDENCY_LIST } from "../utils/constants";
 import type {
   DependencyItem,
   DependencyCategory,
@@ -40,23 +43,9 @@ const CATEGORY_LABELS: Record<DependencyCategory, string> = {
   other: "其他组件",
 };
 
-const ALL_DEPS: Omit<DependencyItem, "installed" | "install_time">[] = [
-  { id: "dotnet46", name: ".NET Framework 4.6", category: "dotnet", description: "WeGame 核心运行时依赖", size_mb: 180, required: true },
-  { id: "dotnet48", name: ".NET Framework 4.8", category: "dotnet", description: "最新版 .NET Framework 运行时（推荐）", size_mb: 200, required: true },
-  { id: "vcpp2005", name: "Visual C++ 2005 Redistributable", category: "vcpp", description: "部分旧组件依赖的 VC++ 运行时", size_mb: 6, required: false },
-  { id: "vcpp2008", name: "Visual C++ 2008 Redistributable", category: "vcpp", description: "部分游戏组件依赖", size_mb: 9, required: true },
-  { id: "vcpp2010", name: "Visual C++ 2010 Redistributable", category: "vcpp", description: "广泛使用的 VC++ 运行时版本", size_mb: 11, required: true },
-  { id: "vcpp2012", name: "Visual C++ 2012 Redistributable", category: "vcpp", description: "部分游戏和工具依赖", size_mb: 12, required: true },
-  { id: "vcpp2013", name: "Visual C++ 2013 Redistributable", category: "vcpp", description: "常用 VC++ 运行时", size_mb: 13, required: true },
-  { id: "vcpp2015-2022", name: "Visual C++ 2015-2022 (x64)", category: "vcpp", description: "最新版 VC++ 运行时集合包", size_mb: 35, required: true },
-  { id: "font-microsoft-core", name: "Microsoft Core Fonts", category: "font", description: "Arial、Times New Roman 等基础字体", size_mb: 8, required: true },
-  { id: "font-cjk", name: "CJK Support Fonts (CJKfonts)", category: "font", description: "中日韩文字支持字体，解决中文乱码问题", size_mb: 25, required: true },
-  { id: "ie8", name: "Internet Explorer 8", category: "browser", description: "WeGame 内嵌浏览器依赖的 IE 内核组件", size_mb: 150, required: true },
-  { id: "gdiplus", name: "GDI+ (gdiplus)", category: "system", description: "Windows 图形设备接口库", size_mb: 3, required: true },
-  { id: "mscoree", name: ".NET Core Runtime (mscoree)", category: "system", description: ".NET Framework 核心执行引擎", size_mb: 2, required: true },
-  { id: "directx9", name: "DirectX 9.0c (d3dx9)", category: "system", description: "DirectX 9 运行时库，部分游戏需要", size_mb: 50, required: true },
-  { id: "vcrun6", name: "Visual Basic 6 Runtime (vcrun6)", category: "other", description: "VB6 运行时兼容层", size_mb: 5, required: false },
-];
+// PRD v1.4: fallback 列表直接复用 constants.ts 中的 DEPENDENCY_LIST
+// （单一事实来源，避免前端多处维护同一份依赖元数据导致的不一致）
+const ALL_DEPS = DEPENDENCY_LIST;
 
 type FilterType = "all" | "installed" | "missing";
 
@@ -71,6 +60,7 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
   const [filter, setFilter] = useState<FilterType>("all");
   const [showReinstallConfirm, setShowReinstallConfirm] = useState(false);
   const [showResetPrefixConfirm, setShowResetPrefixConfirm] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   const fetchDeps = useCallback(async () => {
     try {
@@ -129,6 +119,14 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
               重新配置环境
             </button>
           )}
+          <button
+            onClick={() => setShowDiagnostics(true)}
+            className="neon-secondary flex items-center gap-1.5 text-sm"
+            title="诊断 WeGame 运行环境（网络/证书/Proton）"
+          >
+            <Activity className="h-3.5 w-3.5" />
+            WeGame 诊断
+          </button>
           <button
             onClick={handleInstallSelected}
             disabled={progress.status === "running" || installedCount === filtered.length}
@@ -281,6 +279,12 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
       </div>
 
       {/* Dialogs */}
+      <DiagnosticsPanel
+        open={showDiagnostics}
+        onClose={() => setShowDiagnostics(false)}
+        config={config}
+      />
+
       <ConfirmDialog
         open={showReinstallConfirm}
         title="重新安装所有依赖"

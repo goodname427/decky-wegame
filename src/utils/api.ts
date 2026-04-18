@@ -116,3 +116,7 @@ export const checkForUpdate = (channel: string) =>
   invoke("check_for_update", { channel });
 export const downloadAndInstallUpdate = (downloadUrl: string, fileName: string) =>
   invoke("download_and_install_update", { downloadUrl, fileName });
+
+// WeGame runtime diagnostics (PRD v1.4 §4.7)
+export const runWegameDiagnostics = (config?: any) =>
+  invoke("run_wegame_diagnostics", config ? { config } : undefined);

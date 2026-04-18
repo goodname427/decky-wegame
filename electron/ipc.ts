@@ -15,6 +15,7 @@ import {
 } from "./backend/middleware";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import { cleanupAllLogs } from "./backend/logger";
+import { runDiagnostics } from "./backend/diagnostics";
 import os from "os";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -133,6 +134,28 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       return { success: true, message: "日志文件清理完成" };
     } catch (err) {
       return { success: false, message: `日志清理失败: ${err}` };
+    }
+  });
+
+  // WeGame runtime diagnostics (PRD v1.4 §4.7)
+  ipcMain.handle("run_wegame_diagnostics", async (_event, args?: { config?: EnvironmentConfig }) => {
+    try {
+      return await runDiagnostics(args?.config);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        timestamp: new Date().toISOString(),
+        results: [
+          {
+            id: "runner",
+            title: "诊断执行",
+            status: "fail" as const,
+            message: `诊断执行失败：${msg}`,
+            elapsedMs: 0,
+          },
+        ],
+        overall: "fail" as const,
+      };
     }
   });
 

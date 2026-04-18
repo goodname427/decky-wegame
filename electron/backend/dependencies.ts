@@ -5,6 +5,7 @@ import { DependencyItem, DependencyCategory, EnvironmentConfig, InstallProgress,
 import { expandPath } from "./environment";
 import { scanProtonVersions, getDefaultProtonPath } from "./proton";
 import { depsLogger as log } from "./logger";
+import { preseedWinetricksCache } from "./mirrors";
 
 /**
  * Resolve environment variables required to run winetricks using the wine
@@ -124,22 +125,31 @@ interface DependencyDef {
   required: boolean;
 }
 
+// PRD v1.4: Dependency minimization strategy.
+// Only CJK + core fonts are recommended (required=true) by default because
+// they fix the most visible issue (garbled Chinese UI). Everything else is
+// opt-in: Proton-GE already bundles most vcrun / d3dx9; .NET on Wine is
+// notoriously unstable and is NOT needed by WeGame's C++/Qt core.
 const DEPENDENCY_DEFINITIONS: DependencyDef[] = [
-  { id: "dotnet46", name: ".NET Framework 4.6", category: "dotnet", description: "WeGame core runtime dependency", size_mb: 180, required: true },
-  { id: "dotnet48", name: ".NET Framework 4.8", category: "dotnet", description: "Latest .NET Framework runtime (recommended)", size_mb: 200, required: true },
-  { id: "vcpp2005", name: "Visual C++ 2005 Redistributable", category: "vcpp", description: "VC++ runtime for legacy components", size_mb: 6, required: false },
-  { id: "vcpp2008", name: "Visual C++ 2008 Redistributable", category: "vcpp", description: "Game component dependency", size_mb: 9, required: true },
-  { id: "vcpp2010", name: "Visual C++ 2010 Redistributable", category: "vcpp", description: "Widely used VC++ runtime", size_mb: 11, required: true },
-  { id: "vcpp2012", name: "Visual C++ 2012 Redistributable", category: "vcpp", description: "Game and tool dependency", size_mb: 12, required: true },
-  { id: "vcpp2013", name: "Visual C++ 2013 Redistributable", category: "vcpp", description: "Common VC++ runtime", size_mb: 13, required: true },
-  { id: "vcpp2015-2022", name: "Visual C++ 2015-2022 (x64)", category: "vcpp", description: "Latest VC++ runtime bundle", size_mb: 35, required: true },
-  { id: "font-microsoft-core", name: "Microsoft Core Fonts", category: "font", description: "Arial, Times New Roman and other base fonts", size_mb: 8, required: true },
-  { id: "font-cjk", name: "CJK Support Fonts (CJKfonts)", category: "font", description: "CJK font support, fixes garbled Chinese text", size_mb: 25, required: true },
-  { id: "ie8", name: "Internet Explorer 8", category: "browser", description: "IE kernel for WeGame embedded browser", size_mb: 150, required: true },
-  { id: "gdiplus", name: "GDI+ (gdiplus)", category: "system", description: "Windows Graphics Device Interface library", size_mb: 3, required: true },
-  { id: "mscoree", name: ".NET Core Runtime (mscoree)", category: "system", description: ".NET Framework core execution engine", size_mb: 2, required: true },
-  { id: "directx9", name: "DirectX 9.0c (d3dx9)", category: "system", description: "DirectX 9 runtime library", size_mb: 50, required: true },
-  { id: "vcrun6", name: "Visual Basic 6 Runtime (vcrun6)", category: "other", description: "VB6 runtime compatibility layer", size_mb: 5, required: false },
+  // Recommended (default-checked)
+  { id: "font-microsoft-core", name: "Microsoft Core Fonts", category: "font", description: "Arial, Times New Roman and other base English fonts (recommended)", size_mb: 8, required: true },
+  { id: "font-cjk", name: "CJK Support Fonts (CJKfonts)", category: "font", description: "CJK fonts, fixes garbled Chinese UI in WeGame (strongly recommended)", size_mb: 25, required: true },
+  // On-demand (.NET — unstable on Wine, install only on explicit error)
+  { id: "dotnet46", name: ".NET Framework 4.6", category: "dotnet", description: "On-demand only; .NET is unstable on Wine", size_mb: 180, required: false },
+  { id: "dotnet48", name: ".NET Framework 4.8", category: "dotnet", description: "On-demand only; .NET is unstable on Wine", size_mb: 200, required: false },
+  // On-demand (VC++ — Proton-GE already bundles these)
+  { id: "vcpp2005", name: "Visual C++ 2005 Redistributable", category: "vcpp", description: "Proton-GE already bundles this; on-demand only", size_mb: 6, required: false },
+  { id: "vcpp2008", name: "Visual C++ 2008 Redistributable", category: "vcpp", description: "Proton-GE already bundles this; on-demand only", size_mb: 9, required: false },
+  { id: "vcpp2010", name: "Visual C++ 2010 Redistributable", category: "vcpp", description: "Proton-GE already bundles this; on-demand only", size_mb: 11, required: false },
+  { id: "vcpp2012", name: "Visual C++ 2012 Redistributable", category: "vcpp", description: "Proton-GE already bundles this; on-demand only", size_mb: 12, required: false },
+  { id: "vcpp2013", name: "Visual C++ 2013 Redistributable", category: "vcpp", description: "Proton-GE already bundles this; on-demand only", size_mb: 13, required: false },
+  { id: "vcpp2015-2022", name: "Visual C++ 2015-2022 (x64)", category: "vcpp", description: "Proton-GE already bundles this; on-demand only", size_mb: 35, required: false },
+  // On-demand (Browser / System / Other)
+  { id: "ie8", name: "Internet Explorer 8", category: "browser", description: "On-demand only; install if WeGame embedded browser misbehaves", size_mb: 150, required: false },
+  { id: "gdiplus", name: "GDI+ (gdiplus)", category: "system", description: "On-demand only; install on graphics rendering issues", size_mb: 3, required: false },
+  { id: "mscoree", name: ".NET Core Runtime (mscoree)", category: "system", description: "On-demand only; install if .NET-related errors appear", size_mb: 2, required: false },
+  { id: "directx9", name: "DirectX 9.0c (d3dx9)", category: "system", description: "Proton-GE already bundles this; on-demand only", size_mb: 50, required: false },
+  { id: "vcrun6", name: "Visual Basic 6 Runtime (vcrun6)", category: "other", description: "On-demand only; install if legacy VB6 components fail", size_mb: 5, required: false },
 ];
 
 const WINETRICKS_ID_MAP: Record<string, string> = {
@@ -380,6 +390,31 @@ export async function installDependencies(
   let completed = 0;
   let failed = 0;
   const failedDeps: string[] = [];
+
+  // PRD v1.4 §4.2.2.2: Pre-seed winetricks cache from domestic mirrors to
+  // avoid well-known upstream failures (Microsoft CDN cert issues, web.archive
+  // IPv6 unreachable, etc.). Best-effort: we never abort on pre-seed failure.
+  try {
+    const wtVerbs = selectedIds.map((id) => winetricksId(id));
+    log.info(`[mirrors] Pre-seeding winetricks cache for: ${wtVerbs.join(", ")}`);
+    emitter.emitLog({
+      level: "info",
+      message: "正在尝试从国内镜像源预下载依赖包（避免境外源失败）...",
+      timestamp: new Date().toTimeString().slice(0, 8),
+    });
+    const seeded = await preseedWinetricksCache(wtVerbs);
+    if (seeded.length > 0) {
+      log.info(`[mirrors] Successfully pre-seeded: ${seeded.join(", ")}`);
+      emitter.emitLog({
+        level: "info",
+        message: `已从镜像源预下载：${seeded.join(", ")}`,
+        timestamp: new Date().toTimeString().slice(0, 8),
+      });
+    }
+  } catch (err) {
+    // Non-fatal — just warn and continue with the normal winetricks path.
+    log.warn(`[mirrors] pre-seed stage reported error (continuing): ${err}`);
+  }
 
   for (let idx = 0; idx < selectedIds.length; idx++) {
     const depId = selectedIds[idx];
