@@ -1,186 +1,321 @@
 import fs from "fs";
 import path from "path";
+import { format as utilFormat } from "util";
+
+/**
+ * Unreal Engine 风格的日志系统。
+ *
+ * 设计要点（v1.9.0）：
+ *  - **每次运行一个日志文件**：启动时在 `logs/` 下创建
+ *    `decky-wegame_<yyyyMMdd_HHmmss>.log`，当前会话的所有类别、所有等级都写进这一个文件。
+ *  - **Category（类别）**：每个模块通过 `Log.category("WineBoot")` 取到
+ *    一个带类别绑定的 logger，输出时前缀固定为 `LogWineBoot:`，便于 grep。
+ *  - **Verbosity（等级）**：Fatal / Error / Warning / Display / Log / Verbose /
+ *    VeryVerbose，与 UE 对齐。控制台阈值默认 `Log`（即 Log/Display/Warning/
+ *    Error/Fatal 上屏）；文件阈值默认 `VeryVerbose`（即全部落盘）。
+ *  - **latest.log**：会话文件同时复制一份到 `logs/latest.log`，方便用户
+ *    「发最近一次日志」时不用找时间戳。
+ *  - **行格式**（UE 经典格式）：
+ *      [2026.04.18-18.25.32:161] LogWineBoot: Warning: prefix unhealthy ...
+ *      [2026.04.18-18.25.44:635] LogDeps: detected installed packages: ...
+ *    Verbosity 为 `Log` 时不写等级前缀；其余等级会写成
+ *    `Error: / Warning: / Display: / Verbose: / VeryVerbose: / Fatal:`。
+ */
+
+// ---------------------------------------------------------------------------
+// Types & constants
+// ---------------------------------------------------------------------------
+
+export type Verbosity =
+  | "Fatal"
+  | "Error"
+  | "Warning"
+  | "Display"
+  | "Log"
+  | "Verbose"
+  | "VeryVerbose";
+
+const VERBOSITY_RANK: Record<Verbosity, number> = {
+  Fatal: 0,
+  Error: 1,
+  Warning: 2,
+  Display: 3,
+  Log: 4,
+  Verbose: 5,
+  VeryVerbose: 6,
+};
 
 const LOG_DIR_NAME = "decky-wegame/logs";
-const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per log file
-const MAX_LOG_FILES = 10; // Keep up to 10 rotated files
-const MAX_SESSION_LOGS = 20; // Keep up to 20 session log files
+const MAX_SESSION_LOGS = 20; // 只保留最近 20 次会话的日志文件
 
-type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
+/** 控制台阈值：`Log` 及以上上屏（Verbose / VeryVerbose 只落盘）。 */
+const CONSOLE_THRESHOLD: Verbosity = "Log";
+/** 文件阈值：全部落盘。 */
+const FILE_THRESHOLD: Verbosity = "VeryVerbose";
 
-let logDir: string | null = null;
+// ---------------------------------------------------------------------------
+// Session bootstrap
+// ---------------------------------------------------------------------------
 
-function getLogDir(): string {
-  if (logDir) return logDir;
+function resolveLogDir(): string {
   const dataDir =
     process.env.XDG_DATA_HOME ||
     path.join(process.env.HOME || "/home/deck", ".local/share");
-  logDir = path.join(dataDir, LOG_DIR_NAME);
-  fs.mkdirSync(logDir, { recursive: true });
-  return logDir;
+  const dir = path.join(dataDir, LOG_DIR_NAME);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
-/**
- * Generate a unique session ID for this run
- */
 function generateSessionId(): string {
   const now = new Date();
   const pad = (n: number, len = 2) => String(n).padStart(len, "0");
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return (
+    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_` +
+    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  );
 }
 
-/**
- * Get session-specific log file path
- */
-function getSessionLogFilePath(name: string, sessionId?: string): string {
-  const session = sessionId || generateSessionId();
-  return path.join(getLogDir(), `${name}_${session}.log`);
+function formatTimestampUE(): string {
+  // [2026.04.18-18.25.32:161]
+  const now = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return (
+    `${now.getFullYear()}.${pad(now.getMonth() + 1)}.${pad(now.getDate())}` +
+    `-${pad(now.getHours())}.${pad(now.getMinutes())}.${pad(now.getSeconds())}` +
+    `:${pad(now.getMilliseconds(), 3)}`
+  );
 }
 
-/**
- * Get latest session log file path
- */
-function getLatestSessionLogFilePath(name: string): string {
-  return path.join(getLogDir(), `${name}.log`);
-}
+const LOG_DIR = resolveLogDir();
+const SESSION_ID = generateSessionId();
+const SESSION_LOG_PATH = path.join(LOG_DIR, `decky-wegame_${SESSION_ID}.log`);
+const LATEST_LOG_PATH = path.join(LOG_DIR, `latest.log`);
 
-/**
- * Clean up old session logs to avoid disk space issues
- */
-function cleanupOldSessionLogs(name: string): void {
-  try {
-    const logDir = getLogDir();
-    const files = fs.readdirSync(logDir).filter(f => f.startsWith(`${name}_`) && f.endsWith('.log'));
-    
-    if (files.length > MAX_SESSION_LOGS) {
-      // Sort by creation time (newest first)
-      const sortedFiles = files.map(f => ({
-        name: f,
-        path: path.join(logDir, f),
-        time: fs.statSync(path.join(logDir, f)).birthtime.getTime()
-      })).sort((a, b) => b.time - a.time);
-      
-      // Remove oldest files beyond the limit
-      const filesToRemove = sortedFiles.slice(MAX_SESSION_LOGS);
-      filesToRemove.forEach(file => {
-        try {
-          fs.unlinkSync(file.path);
-          console.log(`Cleaned up old log file: ${file.name}`);
-        } catch (err) {
-          console.warn(`Failed to cleanup log file ${file.name}: ${err}`);
-        }
-      });
+// 一次会话只用一个 append stream，避免每行都 open/close。
+let sessionStream: fs.WriteStream | null = null;
+let latestStream: fs.WriteStream | null = null;
+
+function ensureStreams(): void {
+  if (!sessionStream) {
+    try {
+      sessionStream = fs.createWriteStream(SESSION_LOG_PATH, { flags: "a" });
+    } catch {
+      sessionStream = null;
     }
-  } catch (err) {
-    console.warn(`Failed to cleanup session logs: ${err}`);
+  }
+  if (!latestStream) {
+    try {
+      // latest.log 在每次会话启动时截断（truncate），只保留当次会话的内容。
+      latestStream = fs.createWriteStream(LATEST_LOG_PATH, { flags: "w" });
+    } catch {
+      latestStream = null;
+    }
   }
 }
 
-function rotateIfNeeded(filePath: string): void {
+function cleanupOldSessionLogs(): void {
   try {
-    if (!fs.existsSync(filePath)) return;
-    const stat = fs.statSync(filePath);
-    if (stat.size < MAX_LOG_SIZE) return;
-
-    // Rotate: .log -> .log.1 -> .log.2 -> .log.3 (delete oldest)
-    for (let i = MAX_LOG_FILES; i >= 1; i--) {
-      const older = `${filePath}.${i}`;
-      const newer = i === 1 ? filePath : `${filePath}.${i - 1}`;
-      if (fs.existsSync(newer)) {
-        if (i === MAX_LOG_FILES) {
-          fs.unlinkSync(older);
-        }
-        fs.renameSync(newer, older);
+    const files = fs
+      .readdirSync(LOG_DIR)
+      .filter((f: string) => f.startsWith("decky-wegame_") && f.endsWith(".log"));
+    if (files.length <= MAX_SESSION_LOGS) return;
+    const sorted = files
+      .map((f: string) => {
+        const p = path.join(LOG_DIR, f);
+        return { name: f, path: p, time: fs.statSync(p).mtime.getTime() };
+      })
+      .sort((a: { time: number }, b: { time: number }) => b.time - a.time);
+    for (const old of sorted.slice(MAX_SESSION_LOGS)) {
+      try {
+        fs.unlinkSync(old.path);
+      } catch {
+        // ignore
       }
     }
   } catch {
-    // Ignore rotation errors
+    // ignore
   }
 }
 
-function formatTimestamp(): string {
-  const now = new Date();
-  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+// ---------------------------------------------------------------------------
+// Core writer
+// ---------------------------------------------------------------------------
+
+function formatArgs(args: unknown[]): string {
+  // 支持两种调用风格：
+  //   L.log("foo %s", x)   // printf 风格
+  //   L.log("foo", x, y)   // 多参数拼接
+  if (args.length === 0) return "";
+  const [first, ...rest] = args;
+  if (typeof first === "string" && rest.length > 0) {
+    try {
+      return utilFormat(first as string, ...rest);
+    } catch {
+      return [first, ...rest].map((a) => String(a)).join(" ");
+    }
+  }
+  return args.map((a) => (typeof a === "string" ? a : utilFormat("%o", a))).join(" ");
 }
 
-function writeLog(logName: string, level: LogLevel, message: string, sessionId?: string): void {
-  try {
-    const filePath = getSessionLogFilePath(logName, sessionId);
-    const latestPath = getLatestSessionLogFilePath(logName);
-    
-    rotateIfNeeded(filePath);
-    const line = `[${formatTimestamp()}] [${level}] ${message}\n`;
-    fs.appendFileSync(filePath, line, "utf-8");
-    
-    // Also write to latest file for backward compatibility
-    fs.appendFileSync(latestPath, line, "utf-8");
-  } catch {
-    // Silently fail - logging should never crash the app
+function buildLine(category: string, verbosity: Verbosity, message: string): string {
+  // UE 经典格式：Verbosity=Log 时省略等级前缀。
+  const prefix = verbosity === "Log" ? "" : `${verbosity}: `;
+  return `[${formatTimestampUE()}] Log${category}: ${prefix}${message}\n`;
+}
+
+function writeLine(category: string, verbosity: Verbosity, message: string): void {
+  const rank = VERBOSITY_RANK[verbosity];
+
+  // File output (all categories merge into one session file + latest.log)
+  if (rank <= VERBOSITY_RANK[FILE_THRESHOLD]) {
+    ensureStreams();
+    const line = buildLine(category, verbosity, message);
+    try {
+      sessionStream?.write(line);
+      latestStream?.write(line);
+    } catch {
+      // ignore
+    }
+  }
+
+  // Console output
+  if (rank <= VERBOSITY_RANK[CONSOLE_THRESHOLD]) {
+    const line = buildLine(category, verbosity, message).replace(/\n$/, "");
+    if (verbosity === "Error" || verbosity === "Fatal") {
+      // eslint-disable-next-line no-console
+      console.error(line);
+    } else if (verbosity === "Warning") {
+      // eslint-disable-next-line no-console
+      console.warn(line);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(line);
+    }
   }
 }
 
-/**
- * Create a named logger instance that writes to a specific log file.
- * Each session gets its own log file with timestamp.
- */
-export function createLogger(name: string) {
-  const sessionId = generateSessionId();
-  
-  // Cleanup old logs on startup
-  cleanupOldSessionLogs(name);
-  
+// ---------------------------------------------------------------------------
+// Public API: Log.category("X")
+// ---------------------------------------------------------------------------
+
+export interface CategoryLogger {
+  /** Verbosity = Log（默认信息级，无等级前缀） */
+  log: (...args: unknown[]) => void;
+  /** Verbosity = Display（高亮用户级信息） */
+  display: (...args: unknown[]) => void;
+  /** Verbosity = Warning */
+  warn: (...args: unknown[]) => void;
+  /** Verbosity = Error */
+  error: (...args: unknown[]) => void;
+  /** Verbosity = Fatal（极严重，通常伴随崩溃） */
+  fatal: (...args: unknown[]) => void;
+  /** Verbosity = Verbose（诊断细节，默认只落盘） */
+  verbose: (...args: unknown[]) => void;
+  /** Verbosity = VeryVerbose（原始 stdout/stderr 之类的噪声） */
+  veryVerbose: (...args: unknown[]) => void;
+
+  /** 兼容旧的 info 语义（= log） */
+  info: (...args: unknown[]) => void;
+  /** 兼容旧的 debug 语义（= verbose） */
+  debug: (...args: unknown[]) => void;
+
+  /** 便利：输出一行分隔符，便于日志分段阅读。 */
+  separator: () => void;
+
+  /** 当前会话日志文件路径 */
+  getLogPath: () => string;
+  /** latest.log 路径 */
+  getLatestLogPath: () => string;
+  /** 会话 ID */
+  getSessionId: () => string;
+}
+
+function makeCategory(rawName: string): CategoryLogger {
+  // 归一化类别名：去掉前缀 Log，如 "LogDeps" → "Deps"；空则为 Temp。
+  const name = (rawName || "Temp").replace(/^Log/i, "");
   return {
-    debug: (msg: string) => writeLog(name, "DEBUG", msg, sessionId),
-    info: (msg: string) => writeLog(name, "INFO", msg, sessionId),
-    warn: (msg: string) => writeLog(name, "WARN", msg, sessionId),
-    error: (msg: string) => writeLog(name, "ERROR", msg, sessionId),
-
-    /** Log a separator line for readability */
-    separator: () => writeLog(name, "INFO", "─".repeat(60), sessionId),
-
-    /** Get the path to this logger's log file */
-    getLogPath: () => getSessionLogFilePath(name, sessionId),
-    
-    /** Get the path to the latest log file */
-    getLatestLogPath: () => getLatestSessionLogFilePath(name),
-    
-    /** Get the session ID for this logger */
-    getSessionId: () => sessionId,
+    log: (...a) => writeLine(name, "Log", formatArgs(a)),
+    display: (...a) => writeLine(name, "Display", formatArgs(a)),
+    warn: (...a) => writeLine(name, "Warning", formatArgs(a)),
+    error: (...a) => writeLine(name, "Error", formatArgs(a)),
+    fatal: (...a) => writeLine(name, "Fatal", formatArgs(a)),
+    verbose: (...a) => writeLine(name, "Verbose", formatArgs(a)),
+    veryVerbose: (...a) => writeLine(name, "VeryVerbose", formatArgs(a)),
+    info: (...a) => writeLine(name, "Log", formatArgs(a)),
+    debug: (...a) => writeLine(name, "Verbose", formatArgs(a)),
+    separator: () => writeLine(name, "Log", "─".repeat(60)),
+    getLogPath: () => SESSION_LOG_PATH,
+    getLatestLogPath: () => LATEST_LOG_PATH,
+    getSessionId: () => SESSION_ID,
   };
 }
 
 /**
- * Clean up all log files
+ * Unreal Engine 风格的日志门面。
+ * 用法：`const L = Log.category("WineBoot"); L.warn("...");`
+ */
+export const Log = {
+  category: makeCategory,
+  /** 当前会话的主日志文件路径 */
+  sessionLogPath: SESSION_LOG_PATH,
+  /** latest.log 路径 */
+  latestLogPath: LATEST_LOG_PATH,
+  /** 会话 ID */
+  sessionId: SESSION_ID,
+};
+
+// ---------------------------------------------------------------------------
+// Backward-compatible legacy exports
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated 请使用 `Log.category("X")`；这里只是为了兼容旧 import。
+ * 新实现下 `name` 参数直接作为 Category 使用。
+ */
+export function createLogger(name: string): CategoryLogger {
+  return makeCategory(name);
+}
+
+/** 主程序 / IPC / 生命周期 */
+export const appLogger = makeCategory("App");
+/** 启动 WeGame / Proton 相关 */
+export const launcherLogger = makeCategory("Launcher");
+/** 依赖安装（winetricks、字体、运行时） */
+export const depsLogger = makeCategory("Deps");
+/** WeGame 下载与安装器 */
+export const installerLogger = makeCategory("Installer");
+
+/**
+ * 清空历史日志（会话文件 + latest.log）。
+ * 保留对外接口以兼容 ipc.ts 的调用。
  */
 export function cleanupAllLogs(): void {
   try {
-    const logDir = getLogDir();
-    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.log'));
-    
-    files.forEach(file => {
+    sessionStream?.end();
+    latestStream?.end();
+    sessionStream = null;
+    latestStream = null;
+    const files = fs.readdirSync(LOG_DIR).filter((f: string) => f.endsWith(".log"));
+    for (const f of files) {
       try {
-        fs.unlinkSync(path.join(logDir, file));
-        console.log(`Cleaned up log file: ${file}`);
-      } catch (err) {
-        console.warn(`Failed to cleanup log file ${file}: ${err}`);
+        fs.unlinkSync(path.join(LOG_DIR, f));
+      } catch {
+        // ignore individual failures
       }
-    });
-    
-    console.log(`Cleaned up ${files.length} log files`);
-  } catch (err) {
-    console.error(`Failed to cleanup logs: ${err}`);
+    }
+  } catch {
+    // ignore
   }
 }
 
-/** Main application logger */
-export const appLogger = createLogger("app");
+// ---------------------------------------------------------------------------
+// Session init banner
+// ---------------------------------------------------------------------------
 
-/** Launcher (Proton/WeGame) logger */
-export const launcherLogger = createLogger("launcher");
+cleanupOldSessionLogs();
+ensureStreams();
 
-/** Dependency installation logger */
-export const depsLogger = createLogger("dependencies");
-
-/** WeGame installer logger (download + run WeGameSetup.exe) */
-export const installerLogger = createLogger("installer");
+// 在会话文件里写一段启动横幅，便于从日志中一眼识别新会话边界。
+writeLine("Init", "Display", `==== decky-wegame session ${SESSION_ID} started ====`);
+writeLine("Init", "Log", `pid=${process.pid} node=${process.version} platform=${process.platform}`);
+writeLine("Init", "Log", `session log: ${SESSION_LOG_PATH}`);

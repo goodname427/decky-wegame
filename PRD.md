@@ -8,7 +8,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **当前版本**：v1.8.2
+- **当前版本**：v1.9.0
 - **最后更新**：2026-04-18
 
 ---
@@ -146,7 +146,7 @@
   2. **在线下载路径**（实验性兜底）：`downloadWegameInstaller` 按顺序遍历 `DEFAULT_WEGAME_INSTALLER_URL_CANDIDATES` + 用户自定义 `extra_env_vars.WEGAME_INSTALLER_URL`（用户优先级最高），每个候选 URL 先 HEAD 探测（超时 10s，要求 200 + content-length > 1 MB），首个可用的走完整下载。全部失败时返回明确的 `all-sources-unavailable` 错误，前端引导回本地文件路径。
   3. **共享安装终点**：两路最终都调 `runWegameInstaller`，通过 `resolveWineBackendEnv()` + `ensureWinePrefixInitialized()` 确保 prefix 可用，`spawn(wine64, "WeGameSetup.exe")` 后以 5 秒一次心跳推进条（上限 80%），进程退出后再次 `isWegameInstalled` 校验即完成。
 - **失败恢复**：错误卡首先引导用户「选本地文件」，同时保留「打开官网」、「重试在线下载」、「清缓存并重新下载」四个动作。
-- **日志**：使用独立的 `installerLogger`（输出到 `logs/installer_*.log`），方便与依赖安装日志区别。
+- **日志**：使用 `Log.category("Installer")` 类别（行前缀 `LogInstaller:`），与其它模块共享同一个会话级日志文件，grep 即可过滤出安装器相关的行。
 - **跳过**：任何时候点右下角「稍后安装并完成」或「完成」都允许结束向导，仅在 `wegameInstalled===true` 时按钮文案为「完成」。
 
 **IPC 接口**（已暴露给前端 `src/utils/api.ts`）：
@@ -399,11 +399,11 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
   - 按钮禁用直到后端 IPC 返回或超时
 - **即时错误反馈**
   - IPC 抛出的任何错误（如 `No Proton version found` / `WeGame executable not found` / spawn 失败）必须以**页面顶部红色横幅**（dismissable）形式展示 `err.message` 全文
-  - 横幅下方附一行灰色小字："详细日志：`~/.local/share/decky-wegame/logs/launcher.log`"
+  - 横幅下方附一行灰色小字："详细日志：`~/.local/share/decky-wegame/logs/latest.log`（自动指向最近一次会话）"
   - 横幅保留直到用户关闭或下一次成功操作
 - **启动后探测**
   - 启动命令返回后，等待 3 秒再 `refetch` WeGame 状态
-  - 若此时 `status.running === false`（进程秒退），展示**黄色警示横幅**："WeGame 进程已启动但随即退出，可能是 prefix 损坏或依赖缺失。查看 `launcher.log` 中 `[stderr]` 与 `exited with code` 附近内容定位原因"
+  - 若此时 `status.running === false`（进程秒退），展示**黄色警示横幅**："WeGame 进程已启动但随即退出，可能是 prefix 损坏或依赖缺失。查看 `latest.log` 中 `LogLauncher:` 相关行（尤其 `[stderr]` 与 `exited with code` 附近内容）定位原因"
   - 若 `status.running === true`，清除任何现存横幅
 - **停止按钮**
   - 同样需要 loading 状态 + 错误横幅
@@ -524,17 +524,21 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 ## 五、跨模块系统性需求
 
 ### 5.1 日志系统（重要）
-- **存储路径**：`~/.local/share/decky-wegame/logs/`
-- **会话级日志**：每次运行生成唯一会话 ID（`YYYYMMDD_HHMMSS`）
-  - 文件命名：`<应用名>_<会话ID>.log`（如 `dependencies_20260418_020106.log`）
-  - **禁止所有日志写入同一个文件**
-- **日志轮转**：单文件最大 5 MB，保留 10 个历史
-- **自动清理**：最多保留 20 个会话日志文件
-- **清理入口**：设置页「缓存与日志管理」提供一键清理
-- **日志内容要求**：
-  - launcher：Proton 路径、环境变量、子进程 stdout/stderr、退出码
-  - dependencies：winetricks 命令输出、每个依赖的成功/失败状态
 
+**设计风格**：对齐 Unreal Engine 的 `Log<Category>: <Verbosity>: <msg>` 风格。
+
+- **存储路径**：`~/.local/share/decky-wegame/logs/`
+- **会话级单文件**：每次运行生成唯一会话 ID（`YYYYMMDD_HHMMSS`），所有模块、所有等级的日志**写入同一个文件**：`decky-wegame_<会话 ID>.log`。**禁止再按模块拆分文件**（旧版的 `dependencies_*.log / installer_*.log / launcher_*.log` 已废弃）。
+- **latest.log**：会话启动时在同一目录下同步写一份 `latest.log`（截断写），作为「最近一次会话」的固定入口，方便用户反馈问题时不用找时间戳。
+- **Category**：每个模块用 `Log.category("Xxx")` 申请专属 logger，输出行前缀就是 `LogXxx:`（如 `LogDeps:` / `LogInstaller:` / `LogLauncher:` / `LogWineBoot:`），便于 `grep`。
+- **Verbosity**：`Fatal / Error / Warning / Display / Log / Verbose / VeryVerbose`（与 UE 一致）。行格式：`[2026.04.18-18.25.32:161] LogWineBoot: Warning: prefix unhealthy ...`；Verbosity=`Log` 时省略等级前缀。
+- **阈值**：文件默认落盘全部等级（`VeryVerbose` 也写）；控制台默认 `Log` 及以上上屏（`Verbose / VeryVerbose` 只落盘，不干扰开发台）。
+- **会话数量限制**：最多保留最近 20 个会话日志文件，超出自动清理最旧的；不再按单文件大小轮转。
+- **清理入口**：设置页「缓存与日志管理」提供一键清理（清空 `logs/` 整个目录）。
+- **内容要求**：
+  - `LogLauncher`：Proton 路径、环境变量、子进程 stdout/stderr、退出码。
+  - `LogDeps` / `LogWineBoot`：winetricks 命令输出、wineboot --init 的 stdout/stderr（VeryVerbose 落盘）、每个依赖的成败状态。
+  - `LogInstaller`：下载跟踪、WeGameSetup.exe 运行结果。
 ### 5.2 异步处理（重要约束）
 - **严禁使用 `execSync` 执行可能阻塞 UI 的命令**，尤其是需要 sudo 的命令
 - 所有可能耗时的后端命令必须异步（`spawn`），并在 IPC 层正确处理，避免阻塞主进程

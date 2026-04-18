@@ -2,7 +2,7 @@
 
 一款运行在 SteamOS / Steam Deck 上的独立桌面应用，用于在 Linux 环境下配置和启动腾讯 WeGame 游戏平台。
 
-> 当前版本：**v1.8.2** · 需求定义见 [PRD.md](./PRD.md)，关键开发记录见 [DEVLOG.md](./DEVLOG.md)
+> 当前版本：**v1.9.0** · 需求定义见 [PRD.md](./PRD.md)，关键开发记录见 [DEVLOG.md](./DEVLOG.md)
 
 ## 功能特性
 
@@ -20,7 +20,7 @@
 - **启动器** - 一键启动 / 停止 WeGame；启动失败时给出红色错误横幅，若错误是「未安装 WeGame」会直接给出「打开配置向导」的直达按钮
 - **游戏库管理** - 扫描 WeGame 已安装游戏，支持添加到 Steam 库
 - **设置页** - 立即生效的配置编辑（防抖自动保存），支持自定义环境变量与启动参数
-- **日志系统** - 按模块拆分（`launcher_*.log` / `dependencies_*.log` / `installer_*.log`），会话级轮转，支持一键清理
+- **日志系统** - Unreal Engine 风格的会话级日志：每次运行一个文件 `decky-wegame_<时间戳>.log`，同时维护一份 `latest.log` 方便反馈问题；所有模块的输出按 `LogXxx` 类别前缀合并在同一个文件里，等级分为 `Error / Warning / Log / Verbose` 等，便于 `grep`。
 
 ## 技术栈
 
@@ -91,7 +91,7 @@ pnpm electron:dev # 启动 Electron 主进程（开发模式）
 
 向导完成后如需重新调整任何配置，**不必重走向导**：在「依赖管理」页顶部即可直接修改 Wine Prefix / WeGame 安装路径、切换 Proton、重装 winetricks、甚至「清缓存并重新安装 WeGame」，所有动作与向导一一对应。
 
-如果启动失败，页面顶部会出现红色错误横幅，并给出 `~/.local/share/decky-wegame/logs/launcher.log` 日志路径；若错误是「未安装 WeGame」，可直接点击横幅里的「打开配置向导」按钮跳回第 5 步继续安装。
+如果启动失败，页面顶部会出现红色错误横幅，并给出 `~/.local/share/decky-wegame/logs/latest.log` 日志路径；若错误是「未安装 WeGame」，可直接点击横幅里的「打开配置向导」按钮跳回第 5 步继续安装。
 
 ## 项目结构
 
@@ -115,7 +115,7 @@ decky-wegame/
 │       ├── steam.ts            # Steam 快捷方式生成
 │       ├── diagnostics.ts      # 运行时诊断（Proton/网络/DNS/TLS/Wine）
 │       ├── updater.ts          # 应用自更新
-│       ├── logger.ts           # 多模块分区日志
+│       ├── logger.ts           # UE 风格会话级日志（Category + Verbosity）
 │       └── types.ts            # 类型定义
 ├── src/                    # React 前端
 │   ├── pages/              # 页面组件（Dashboard / Launcher / SetupWizard / SettingsPage / Dependencies / About）

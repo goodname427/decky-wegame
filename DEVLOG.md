@@ -6,6 +6,19 @@
 
 ---
 
+## 2026-04-18 — 日志系统重构为 Unreal Engine 风格 + wineboot 观测性增强（v1.9.0）
+- **为什么做**：v1.8.2 的日志按模块拆成 `dependencies_*.log / installer_*.log / launcher_*.log` 若干文件，外加一个始终追加写入的"总日志"——分文件的初衷被总日志直接架空，且发生问题时要同时翻多个文件才能对上时序；更关键的是 wineboot 的 stdout/stderr 从来没被落盘（只做了心跳计时），导致「wineboot 退出码 0、前缀却不健康」时完全拿不到原始输出，无法判因。
+- **做了什么**：
+  - **日志按会话拆而不按模块拆**。每次应用启动生成一个 `decky-wegame_<YYYYMMDD_HHMMSS>.log`，所有模块、所有等级的日志都写入同一个文件；同时维护一份 `latest.log`（每次会话启动截断写入）作为"最近一次会话"的固定入口，用户反馈问题不再需要对时间戳。
+  - **API 对齐 Unreal Engine**。新增 `Log.category("Xxx")` 门面，返回的 `CategoryLogger` 支持 `log / display / warn / error / fatal / verbose / veryVerbose` 七级 Verbosity；行格式 `[yyyy.MM.dd-HH.mm.ss:ms] LogXxx: <Verbosity>: <msg>`，`Log` 级省略等级前缀（完全照搬 UE 惯例）。控制台阈值默认 `Log` 及以上，文件阈值默认全部落盘（`Verbose / VeryVerbose` 只落盘不上屏）。
+  - **向后兼容**。保留 `appLogger / launcherLogger / depsLogger / installerLogger` 导出（重指向到 `LogApp / LogLauncher / LogDeps / LogInstaller` 类别），现有 5 个调用点的 import 行零改动。
+  - **wineboot 观测性**。新增独立类别 `LogWineBoot`；wineboot 的 stdout/stderr 逐行落盘到 `LogWineBoot.veryVerbose`，同时进入一个环形 buffer（200 行）；当 `code !== 0 && post.healthy === false` 时，把末尾 50 行附加到抛出的 Error 中（UI 错误横幅会直接展示），彻底杜绝"wineboot 输出被静默吞掉"。
+- **关键决策**：
+  - **"按会话单文件"代替"按模块多文件"**。UE 的 `Game.log` / `ShaderCompile-*.log` 也是这个思路——Category 已经能承担过滤职责，没必要再让文件系统也做一次同样的分类。
+  - **`latest.log` 保留**。否则每次要用户去找时间戳最新的那个文件，对于非技术用户不现实。
+  - **Verbosity 分级时采用 UE 语义而非 JS 生态语义**。`log.info` 被映射成 `Log` 级而不是 `Display` 级——因为 UE 里 `Display` 是"必须给用户看到"的高亮级，和 JS 里 `info` 的"一般提示"语义不一致；同时保留 `info`/`debug` 别名以方便老代码理解。
+- **关键文件**：`electron/backend/logger.ts`（整体重写）、`electron/backend/dependencies.ts`（wineboot 段：输出落盘 + 错误消息附带原始尾部）、`PRD.md` §3.3 / §4.7 / §5.1、`README.md`、`package.json`。
+
 ## 2026-04-18 — 修复残缺 Wine 前缀导致 WeGame 安装器 `c0000135` 卡死（v1.8.2）
 - **问题现象**：点「选择本地安装器文件」运行 `WeGameSetup.exe` 时，installer 日志反复出现 `wine: could not load kernel32.dll, status c0000135` 与 `installer exited with code=53`；即便手动 `rm -rf` 整个 prefix 后重装，应用重新跑完 `wineboot --init`，现象仍不消失。
 - **根因**：`ensureWinePrefixInitialized` 原本只用单文件哨兵 `syswow64/regedit.exe` 判断前缀是否已初始化。现场命中了两种退化场景：(a) 哨兵文件存在但 `kernel32.dll` 缺失；(b) 前缀被以 32-bit 模式建好（只有 `system32/` 没有 `syswow64/`），哨兵直接不存在但 wine64 启动仍失败。第二种情况还会被 wineboot 自身误判为"已有前缀、不需要重建"从而卡住。

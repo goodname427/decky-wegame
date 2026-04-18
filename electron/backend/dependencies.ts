@@ -4,8 +4,11 @@ import path from "path";
 import { DependencyItem, DependencyCategory, EnvironmentConfig, InstallProgress, LogPayload } from "./types";
 import { expandPath } from "./environment";
 import { scanProtonVersions, getDefaultProtonPath } from "./proton";
-import { depsLogger as log } from "./logger";
+import { depsLogger as log, Log } from "./logger";
 import { preseedWinetricksCache } from "./mirrors";
+
+/** Dedicated logger for the wineboot initialization pipeline. */
+const wineBootLog = Log.category("WineBoot");
 
 /**
  * Resolve environment variables required to run winetricks using the wine
@@ -235,19 +238,46 @@ export async function ensureWinePrefixInitialized(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    wineBootLog.log(
+      `spawn: ${wineCmd} wineboot --init  WINEPREFIX=${prefix} WINEARCH=${bootEnv.WINEARCH}`
+    );
+
+    // Capture stdout/stderr. Each chunk is written to the session log under
+    // LogWineBoot at VeryVerbose, *and* appended to an in-memory rolling
+    // buffer so that when wineboot fails we can attach the tail of its
+    // output to the thrown Error (UE-style: raw output is never silently
+    // dropped).
+    const RING_MAX = 200;
+    const ring: string[] = [];
+    const pushLines = (stream: "stdout" | "stderr", chunk: string) => {
+      const lines = chunk.replace(/\r/g, "").split("\n");
+      for (const raw of lines) {
+        if (raw === "") continue;
+        const tagged = `[${stream}] ${raw}`;
+        wineBootLog.veryVerbose(tagged);
+        ring.push(tagged);
+        if (ring.length > RING_MAX) ring.shift();
+      }
+    };
+
     let lastBytes = Date.now();
-    const onData = () => { lastBytes = Date.now(); };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
+    child.stdout?.on("data", (buf: Buffer) => {
+      lastBytes = Date.now();
+      pushLines("stdout", buf.toString("utf8"));
+    });
+    child.stderr?.on("data", (buf: Buffer) => {
+      lastBytes = Date.now();
+      pushLines("stderr", buf.toString("utf8"));
+    });
 
     // Hard cap at 3 minutes; if wineboot hasn't produced output for 60s, kill it.
     const hardTimeout = setTimeout(() => {
-      log.warn("[wineboot] hard timeout after 180s, killing");
+      wineBootLog.warn("hard timeout after 180s, killing");
       try { child.kill("SIGKILL"); } catch { /* noop */ }
     }, 180_000);
     const idleTimer = setInterval(() => {
       if (Date.now() - lastBytes > 60_000) {
-        log.warn("[wineboot] idle > 60s, killing");
+        wineBootLog.warn("idle > 60s, killing");
         try { child.kill("SIGKILL"); } catch { /* noop */ }
         clearInterval(idleTimer);
       }
@@ -256,19 +286,28 @@ export async function ensureWinePrefixInitialized(
     child.on("error", (err) => {
       clearTimeout(hardTimeout);
       clearInterval(idleTimer);
+      wineBootLog.error(`spawn error: ${(err as Error).message}`);
       reject(err);
     });
     child.on("close", (code) => {
       clearTimeout(hardTimeout);
       clearInterval(idleTimer);
       const post = collectPrefixHealthStatus(prefix);
+      wineBootLog.log(
+        `close: exit=${code}  post.healthy=${post.healthy}  missing=${post.missing.length}`
+      );
       if (code === 0 || post.healthy) {
         // Even if exit code isn't zero, if the prefix is now healthy the
         // init essentially succeeded — wineboot is known to exit non-zero
         // on various harmless warnings.
         resolve();
       } else {
-        reject(new Error(`wineboot --init 失败（退出码 ${code}）`));
+        const tail = ring.slice(-50).join("\n");
+        const msg =
+          `wineboot --init 失败（退出码 ${code}）\n\n---- wineboot 输出末尾 ----\n` +
+          (tail || "(wineboot 未产生任何输出，可能根本没执行到 wineboot.exe 的逻辑)");
+        wineBootLog.error(msg);
+        reject(new Error(msg));
       }
     });
   });
