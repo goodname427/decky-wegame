@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "codeconductor": {
+      "name": "CodeConductor.ai",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=codeconductor",
+      "source": "skillhub",
+      "version": "1.0.1"
+    }
+  }
+}

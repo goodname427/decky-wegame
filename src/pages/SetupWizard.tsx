@@ -10,11 +10,10 @@ import type { EnvironmentConfig, DependencyCategory } from "../types";
 import { DEPENDENCY_LIST } from "../utils/constants";
 
 const STEPS = [
-  { id: 1, title: "扫描依赖", icon: ShieldCheck },
-  { id: 2, title: "选择 Proton", icon: Cpu },
-  { id: 3, title: "配置路径", icon: FolderCog },
-  { id: 4, title: "确认依赖", icon: ListChecks },
-  { id: 5, title: "执行安装", icon: Rocket },
+  { id: 1, title: "确认中间层", icon: ShieldCheck },
+  { id: 2, title: "确认依赖", icon: ListChecks },
+  { id: 3, title: "路径选择", icon: FolderCog },
+  { id: 4, title: "执行安装", icon: Rocket },
 ];
 
 function Cpu({ className }: { className?: string }) {
@@ -305,8 +304,8 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         {currentStep === 1 && (
           <div className="space-y-5">
             <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-100">扫描系统依赖</h3>
-              <p className="mt-1 text-sm text-gray-400">自动扫描系统中已有的 Wine 和 winetricks，也可以手动指定路径或选择下载安装。</p>
+              <h3 className="text-lg font-semibold text-gray-100">确认中间层环境</h3>
+              <p className="mt-1 text-sm text-gray-400">检测系统环境中的 Wine、winetricks 和 Proton 兼容层，确保运行环境准备就绪。</p>
             </div>
 
             {scanning ? (
@@ -487,12 +486,12 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
           </div>
         )}
 
-        {currentStep === 2 && (
-          <div className="space-y-4">
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-100">选择 Proton 兼容层</h3>
-              <p className="mt-1 text-sm text-gray-400">选择用于运行 WeGame 的 Proton 版本。推荐使用 GE-Proton 以获得最佳兼容性。</p>
-            </div>
+            {/* Proton 选择部分 */}
+            <div className="space-y-4 pt-4 border-t border-white/10">
+              <div className="mb-4">
+                <h4 className="text-md font-semibold text-gray-100">选择 Proton 兼容层</h4>
+                <p className="mt-1 text-sm text-gray-400">选择用于运行 WeGame 的 Proton 版本。推荐使用 GE-Proton 以获得最佳兼容性。</p>
+              </div>
 
             {protonLoading ? (
               <div className="flex items-center justify-center py-12 text-gray-400">正在扫描可用版本...</div>
@@ -551,12 +550,12 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         {currentStep === 3 && (
           <div className="space-y-5">
             <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-100">配置路径</h3>
-              <p className="mt-1 text-sm text-gray-400">设置 Wine 前缀和 WeGame 安装路径。通常使用默认值即可。</p>
+              <h3 className="text-lg font-semibold text-gray-100">路径选择</h3>
+              <p className="mt-1 text-sm text-gray-400">配置中间层、依赖组件及其他下载内容的保存路径。</p>
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">Wine 前缀路径</label>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">中间层安装路径</label>
               <input
                 type="text"
                 value={localConfig.wine_prefix_path}
@@ -564,19 +563,31 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                 placeholder="~/.local/share/decky-wegame/prefix"
                 className="input-field font-mono text-sm"
               />
-              <p className="mt-1 text-xs text-gray-500">Wine 将在此目录创建 Windows 兼容环境（建议保持默认）</p>
+              <p className="mt-1 text-xs text-gray-500">Wine、Proton 等中间层组件的安装位置（建议保持默认）</p>
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">WeGame 安装路径</label>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">依赖组件缓存路径</label>
               <input
                 type="text"
                 value={localConfig.wegame_install_path}
                 onChange={(e) => updateConfig({ wegame_install_path: e.target.value })}
-                placeholder="Wine 前缀内的 WeGame 安装目录"
+                placeholder="~/.local/share/decky-wegame/cache"
                 className="input-field font-mono text-sm"
               />
-              <p className="mt-1 text-xs text-gray-500">安装 WeGame 后的路径，通常自动检测无需修改</p>
+              <p className="mt-1 text-xs text-gray-500">下载的依赖组件缓存位置，便于后续快速安装</p>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">临时下载目录</label>
+              <input
+                type="text"
+                value="/tmp/decky-wegame"
+                onChange={(e) => updateConfig({ temp_download_path: e.target.value })}
+                placeholder="/tmp/decky-wegame"
+                className="input-field font-mono text-sm"
+              />
+              <p className="mt-1 text-xs text-gray-500">安装过程中的临时文件下载位置</p>
             </div>
 
             <div className="rounded-lg border border-white/5 bg-surface-dark/60 p-3">
@@ -588,10 +599,10 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
           </div>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 2 && (
           <div className="space-y-4">
             <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-100">确认要安装的依赖组件</h3>
+              <h3 className="text-lg font-semibold text-gray-100">确认依赖组件</h3>
               <p className="mt-1 text-sm text-gray-400">勾选需要安装的 Windows 运行时组件。标记为「必需」的组件建议全部安装。</p>
             </div>
 
@@ -668,7 +679,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
             </div>
             
 
-        {currentStep === 5 && (
+        {currentStep === 4 && (
           <div className="space-y-5">
             <div className="text-center">
               <h3 className="text-lg font-semibold text-gray-100">开始安装</h3>
@@ -744,7 +755,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         </div>
 
         <div className="text-xs text-gray-500">
-          步骤 {currentStep} / {totalSteps}
+          步骤 {currentStep} / 4
         </div>
 
         <div className="flex items-center gap-2">
