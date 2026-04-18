@@ -107,3 +107,19 @@
   - IPC 新增接口：`run_wegame_diagnostics`
 - **FAQ 同步更新**："WeGame 0% 卡住"条目从"去装更多依赖"改为"检查 DNS/证书，使用运行诊断"
 - **关键文件**：`PRD.md`（v1.3 → v1.4，新增 §4.2.2.2 / §4.7 / §5.5）、`DEVLOG.md`、`src/utils/constants.ts`、`electron/backend/dependencies.ts`、`electron/backend/mirrors.ts`（新）、`electron/backend/diagnostics.ts`（新）、`electron/ipc.ts`、`src/utils/api.ts`、`src/components/DiagnosticsPanel.tsx`（新）、`src/pages/Dependencies.tsx`
+
+## 2026-04-18 — 性能优化：消除"进依赖管理页卡 2~5 秒"问题（v1.5）
+- **问题现象**：每次打开"设置 → 依赖管理"（即默认子页签）都会有 2~5 秒无法点击任何按钮，所有 IPC 调用像被冻住
+- **根因**：`Dependencies.tsx` 挂载时同步拉取 `get_dependency_list`，IPC handler 内部用 `execSync("winetricks list-installed")` 查询 prefix 已安装包。该命令会触发 wine + wineserver 冷启动 + 注册表读取，单次耗时 2~5 秒；而 `execSync` 会**阻塞 Electron 主进程事件循环**，期间所有 IPC 消息队列全部卡住 → 整个界面假死
+- **修复策略（PRD v1.5 §4.2.2.3）**：
+  1. **后端内存缓存**：以 `WINEPREFIX` 为 key 缓存 `Set<string>` 已安装包列表。缓存命中时立即返回，不启动 winetricks 子进程
+  2. **后端异步化**：新增 `checkInstalledWinetricksAsync`，用 `spawn` 取代 `execSync`，Promise 包装，带 20 秒硬超时兜底；原 sync 版本保留给遗留调用者
+  3. **自动失效**：`installDependencies` 结束（无论成功/部分/失败）时调用 `invalidateDependencyCache(winePrefixPath)`；`reset_environment` IPC handler 中也主动 invalidate
+  4. **手动刷新**：新增 IPC `refresh_dependency_list`（绕过缓存），前端工具栏新增「刷新状态」按钮
+  5. **前端占位渲染**：页面挂载立即用 `DEPENDENCY_LIST` 默认数据渲染（`installed: false`），用户可瞬时操作；真实状态在后台异步刷新完成后平滑合并；工具栏标题右侧显示「正在刷新状态…」提示
+- **关键技术决策**：
+  - 缓存策略**不使用 TTL**（基于时间的过期），只在明确状态变化时 invalidate，避免无意义的 winetricks 调用
+  - 异步版本即使 wineserver 冷启动卡死也不会冻住 UI（Promise 延迟 resolve，其余 IPC 正常流转）
+  - 保留 sync `getDependencyList` 导出，避免破坏潜在的其他调用点
+- **验收标准**：首次冷启动 <200ms 可交互（占位先显示），之后进入 <50ms（缓存命中，几乎瞬时显示正确状态）；任何时刻其他 IPC 调用不会被依赖查询阻塞
+- **关键文件**：`PRD.md`（新增 §4.2.2.3；Changelog v1.5）、`DEVLOG.md`、`electron/backend/dependencies.ts`、`electron/ipc.ts`、`src/utils/api.ts`、`src/pages/Dependencies.tsx`

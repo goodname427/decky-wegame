@@ -4,7 +4,12 @@ import { createPrefix, deletePrefix, prefixExists, getPrefixSizeMb, getPrefixPat
 import { scanProtonVersions, validateProtonPath, checkWinetricksAvailable, checkWineAvailable } from "./backend/proton";
 import { launchWegame, stopWegame, checkWegameStatus } from "./backend/launcher";
 import { generateDesktopEntry, addToSteam, listWegameGames } from "./backend/steam";
-import { getDependencyList, installDependencies, installWinetricks } from "./backend/dependencies";
+import {
+  getDependencyListAsync,
+  installDependencies,
+  installWinetricks,
+  invalidateDependencyCache,
+} from "./backend/dependencies";
 import { checkForUpdate, downloadAndInstallUpdate, UpdateChannel } from "./backend/updater";
 import { scanAllDependencies, validateDependencyPath } from "./backend/dep-scanner";
 import {
@@ -44,6 +49,10 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   });
 
   ipcMain.handle("reset_environment", async (_event, args: { config: EnvironmentConfig }) => {
+    // PRD v1.5 §4.2.2.3: invalidate cache so the next dep-list query re-reads
+    // state from the fresh prefix.
+    const prefixPath = getPrefixPath(args.config);
+    invalidateDependencyCache(prefixPath);
     return await deletePrefix(args.config);
   });
 
@@ -64,10 +73,27 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   });
 
   // Dependencies
+  //
+  // PRD v1.5 §4.2.2.3: we must use the async+cached variant here.
+  // The sync `getDependencyList` is kept exported for legacy callers but
+  // never used by the IPC handler — `execSync` on `winetricks list-installed`
+  // would block the Electron main-process IPC queue for 2~5s (wine + wineserver
+  // cold start), freezing every UI action during that window.
   ipcMain.handle("get_dependency_list", async (_event, args?: { config?: EnvironmentConfig }) => {
     const prefixPath = args?.config ? getPrefixPath(args.config) : undefined;
-    return getDependencyList(prefixPath, args?.config);
+    return await getDependencyListAsync(prefixPath, args?.config);
   });
+
+  // Force-refresh (bypasses cache) — wired to the "Refresh status" button
+  // on the dependency management page.
+  ipcMain.handle(
+    "refresh_dependency_list",
+    async (_event, args?: { config?: EnvironmentConfig }) => {
+      const prefixPath = args?.config ? getPrefixPath(args.config) : undefined;
+      if (prefixPath) invalidateDependencyCache(prefixPath);
+      return await getDependencyListAsync(prefixPath, args?.config, { forceRefresh: true });
+    }
+  );
 
   ipcMain.handle("install_winetricks", async (_event, args: { password: string }) => {
     try {

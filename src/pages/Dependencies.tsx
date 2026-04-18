@@ -56,28 +56,40 @@ interface DependenciesProps {
 export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
   const { config, saveEnvironment, refetch: refetchConfig } = useEnvironment();
   const { progress, logs } = useInstallProgress();
+  // PRD v1.5 §4.2.2.3: render placeholder (installed=false) immediately so the
+  // page is interactive in <50ms even on a cold first visit. The real
+  // installed-state is fetched asynchronously and merged in when ready.
   const [deps, setDeps] = useState<DependencyItem[]>(ALL_DEPS.map((d) => ({ ...d, installed: false })));
   const [filter, setFilter] = useState<FilterType>("all");
   const [showReinstallConfirm, setShowReinstallConfirm] = useState(false);
   const [showResetPrefixConfirm, setShowResetPrefixConfirm] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [loadingDeps, setLoadingDeps] = useState(false);
 
-  const fetchDeps = useCallback(async () => {
+  // `force=true` bypasses the backend cache (wired to the "刷新状态" button).
+  const fetchDeps = useCallback(async (force: boolean = false) => {
+    setLoadingDeps(true);
     try {
-      const result: DependencyItem[] = await invoke("get_dependency_list", { config });
+      const channel = force ? "refresh_dependency_list" : "get_dependency_list";
+      const result: DependencyItem[] = await invoke(channel, { config });
       setDeps(result);
     } catch (err) {
       console.error("Failed to fetch dependency list:", err);
+    } finally {
+      setLoadingDeps(false);
     }
   }, [config]);
 
   useEffect(() => {
-    fetchDeps();
+    fetchDeps(false);
   }, [fetchDeps]);
 
   useEffect(() => {
     if (progress.status === "completed" || progress.status === "error") {
-      fetchDeps();
+      // Backend already invalidated its cache at this point (see
+      // invalidateDependencyCache in installDependencies), so a plain fetch is
+      // enough to get fresh data.
+      fetchDeps(false);
     }
   }, [progress.status, fetchDeps]);
 
@@ -107,7 +119,15 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
     <div className="space-y-5 max-w-5xl mx-auto">
       {/* Top toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-gray-100">依赖管理</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-gray-100">依赖管理</h2>
+          {loadingDeps && (
+            <span className="flex items-center gap-1 text-xs text-gray-500">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              正在刷新状态…
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {onOpenSetupWizard && (
             <button
@@ -126,6 +146,15 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
           >
             <Activity className="h-3.5 w-3.5" />
             WeGame 诊断
+          </button>
+          <button
+            onClick={() => fetchDeps(true)}
+            disabled={loadingDeps}
+            className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-60"
+            title="重新查询 winetricks 已安装状态（绕过缓存）"
+          >
+            <RefreshCw className={"h-3.5 w-3.5 " + (loadingDeps ? "animate-spin" : "")} />
+            刷新状态
           </button>
           <button
             onClick={handleInstallSelected}

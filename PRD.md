@@ -6,7 +6,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **最后更新**：2026-04-18（v1.4）
+- **最后更新**：2026-04-18（v1.5）
 
 ---
 
@@ -214,6 +214,44 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 - 镜像源配置集中在 `electron/backend/mirrors.ts`，方便后续维护
 - 日志中清晰记录每一步尝试的来源、耗时、命中/失败
 - 提供**手动重试**按钮：失败后可选择"换一个源重试"
+
+#### 4.2.2.3 依赖状态缓存与异步刷新（v1.5 新增）
+
+**背景**：用户实测每次进入「设置 → 依赖管理」页面都会卡顿 2~5 秒才能操作。根因是挂载时 IPC 调用 `get_dependency_list`，后端同步执行 `winetricks list-installed`（内部触发 `wineserver` 冷启动 + 注册表读取），在此期间 Electron 主进程的 IPC 队列被 `execSync` 阻塞，全部 UI 操作无响应。
+
+**策略**：
+
+1. **后端内存缓存**
+   - 以 `WINEPREFIX` 路径作为缓存 key，缓存最近一次 `winetricks list-installed` 的结果（`Set<string>`）与时间戳
+   - 缓存命中时立即返回，不启动 winetricks 子进程
+   - 缓存默认**长期有效**（只在显式事件时失效），不使用基于时间的 TTL（避免不必要的 winetricks 调用）
+
+2. **自动失效时机**（覆盖所有状态会真实变化的路径）：
+   - 依赖安装流程结束（成功 / 部分成功 / 全部失败）时 invalidate
+   - 重置 Wine Prefix 后 invalidate
+   - 用户点击「刷新」按钮时 invalidate 并强制重新查询
+   - 切换 `wine_prefix_path`（prefix 路径变更 → 缓存 key 天然不同）自动失效
+
+3. **前端异步 + 立即可交互**
+   - 进入依赖管理页面时，**立即**用 `DEPENDENCY_LIST` 的默认数据渲染（`installed: false` 占位），用户可以立刻操作
+   - 同时后台发起 `get_dependency_list` 调用，返回后平滑更新"已安装"标记
+   - 查询进行中在工具栏显示轻量的「正在刷新状态…」提示（不阻塞任何按钮）
+
+4. **手动刷新入口**
+   - 依赖管理页工具栏新增「刷新状态」按钮（图标 `RefreshCw`，区别于「全部重装」），点击触发强制刷新（绕过缓存）
+   - 刷新按钮在进行中变 `animate-spin`，结束后恢复
+
+5. **后端实现约束**
+   - `checkInstalledWinetricks` 保持现有 `execSync` 实现作为底层能力，但**不在 IPC handler 中同步调用**
+   - 新增异步版本 `checkInstalledWinetricksAsync`：使用 `spawn` + Promise 包装，不阻塞主进程事件循环
+   - IPC handler `get_dependency_list` 改为 `async` + `await`，内部走异步路径 + 缓存
+   - 新增 IPC `refresh_dependency_list`：强制 invalidate 并重新查询
+   - 依赖安装结束的 emit 阶段在后端自动 invalidate，**无需前端显式调用**
+
+**验收标准**：
+- 冷启动第一次进入依赖管理页：<200ms 可交互（列表先显示占位，"已安装"状态稍后到）
+- 之后每次进入：<50ms 可交互（缓存命中，几乎瞬时显示正确的"已安装"状态）
+- 任何时刻其他 IPC 调用（Proton 扫描、配置保存、诊断等）都不会被依赖查询阻塞
 
 #### 4.2.3 中间层管理（新增区块）
 
@@ -457,6 +495,7 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-04-18 | v1.5 | 性能优化：修复"每次进依赖管理页面卡 2~5 秒"问题。根因是 `checkInstalledWinetricks` 用 `execSync` 同步调用 `winetricks list-installed`，阻塞 Electron 主进程 IPC 队列。新增 §4.2.2.3：依赖状态内存缓存 + 后端 `spawn` 异步化 + 前端占位即渲染 + 手动刷新按钮；安装结束/重置 prefix 自动 invalidate |
 | 2026-04-18 | v1.4 | **重大策略调整**：采纳"依赖最小化 + 镜像源兜底 + 诊断模块"三合一方案。理由：1) 实测 WeGame 能启动但安装卡 0%，说明问题不在 Windows 依赖而在网络；2) Proton-GE 已含大部分依赖，重复安装无意义且失败率高；3) .NET 在 Wine 下不稳定，应按需安装。新增 §4.2.2.2 镜像源策略、§4.7 运行诊断模块、§5.5 网络与镜像源；调整 §4.1 步骤 2 与 §4.2.2 依赖分组 |
 | 2026-04-18 | v1.3 | 修复依赖安装失败（`wineserver not found`）：明确依赖安装必须使用所选 Proton 内置的 wine/wineserver，补充 §4.2.2.1；无可用 Wine 后端时立即终止并上报清晰错误 |
 | 2026-04-18 | v1.2 | 重构设置界面：基础设置改为立即生效（防抖）、路径/重置/重新配置入口迁移到依赖管理子页签，并在依赖管理新增中间层（Wine/winetricks/Proton）管理能力 |

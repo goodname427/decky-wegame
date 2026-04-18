@@ -213,6 +213,165 @@ function checkInstalledWinetricks(prefixPath: string, config?: EnvironmentConfig
   return installed;
 }
 
+// ---------------------------------------------------------------------------
+// PRD v1.5 §4.2.2.3 — Async + cached variant
+// ---------------------------------------------------------------------------
+//
+// The sync `checkInstalledWinetricks` above runs `winetricks list-installed`
+// via `execSync`, which blocks the Electron main-process IPC queue for 2~5s
+// (wine + wineserver cold start). We keep it for legacy callers but route the
+// IPC handler through the async+cached path below:
+//
+//   - `checkInstalledWinetricksAsync` spawns winetricks as a child process
+//     (non-blocking), returns a Promise<Set<string>>.
+//   - Results are cached per WINEPREFIX path. Cache is invalidated explicitly
+//     when state actually changes (install/reset-prefix/manual-refresh).
+
+interface InstalledCacheEntry {
+  prefixPath: string;
+  installed: Set<string>;
+  timestamp: number;
+}
+
+const installedCache = new Map<string, InstalledCacheEntry>();
+
+export function invalidateDependencyCache(prefixPath?: string): void {
+  if (prefixPath) {
+    installedCache.delete(prefixPath);
+    log.info(`[deps-cache] invalidated for prefix: ${prefixPath}`);
+  } else {
+    installedCache.clear();
+    log.info(`[deps-cache] invalidated ALL entries`);
+  }
+}
+
+function checkInstalledWinetricksAsync(
+  prefixPath: string,
+  config?: EnvironmentConfig
+): Promise<Set<string>> {
+  return new Promise((resolve) => {
+    const installed = new Set<string>();
+
+    let childEnv: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      WINEPREFIX: prefixPath,
+    };
+    if (config) {
+      try {
+        const { env } = resolveWineBackendEnv(config);
+        childEnv = { ...env, WINEPREFIX: prefixPath };
+      } catch {
+        // Fall back to plain env; the list may be empty but that's OK.
+      }
+    }
+
+    const child = spawn("winetricks", ["list-installed"], {
+      env: childEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+
+    // Hard timeout: if winetricks hangs (e.g. wineserver cold start >15s on a
+    // slow SD card), we give up and return whatever we have. The UI will
+    // still be fully responsive because we never blocked the main process.
+    const timeoutHandle = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      log.warn(`[deps-cache] winetricks list-installed timed out after 20s, killing`);
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      resolve(installed);
+    }, 20000);
+
+    child.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+    child.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+
+    child.on("close", (code) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutHandle);
+
+      if (code === 0) {
+        for (const line of stdout.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith("Using")) {
+            installed.add(trimmed);
+          }
+        }
+        log.info(
+          `[deps-cache] detected installed packages: ${[...installed].join(", ") || "(none)"}`
+        );
+      } else {
+        log.warn(
+          `[deps-cache] winetricks list-installed exited with ${code}: ${stderr.trim().slice(0, 200)}`
+        );
+      }
+      resolve(installed);
+    });
+
+    child.on("error", (err) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutHandle);
+      log.warn(`[deps-cache] failed to spawn winetricks: ${err.message}`);
+      resolve(installed);
+    });
+  });
+}
+
+/**
+ * Async, cached variant used by the IPC handler. Never blocks the main
+ * process; a cache hit returns synchronously-fast. Pass `forceRefresh=true`
+ * from the manual "Refresh" button or from the post-install hook to bypass
+ * the cache.
+ */
+export async function getDependencyListAsync(
+  prefixPath?: string,
+  config?: EnvironmentConfig,
+  opts?: { forceRefresh?: boolean }
+): Promise<DependencyItem[]> {
+  let installed = new Set<string>();
+
+  if (prefixPath) {
+    const cached = installedCache.get(prefixPath);
+    if (cached && !opts?.forceRefresh) {
+      installed = cached.installed;
+      log.info(`[deps-cache] HIT for ${prefixPath} (age ${Date.now() - cached.timestamp}ms)`);
+    } else {
+      log.info(
+        `[deps-cache] MISS for ${prefixPath}${opts?.forceRefresh ? " (forced)" : ""}, querying winetricks...`
+      );
+      installed = await checkInstalledWinetricksAsync(prefixPath, config);
+      installedCache.set(prefixPath, {
+        prefixPath,
+        installed,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  return DEPENDENCY_DEFINITIONS.map((def) => {
+    const wtId = winetricksId(def.id);
+    const isInstalled = installed.has(wtId);
+    return {
+      ...def,
+      installed: isInstalled,
+      install_time: undefined,
+    };
+  });
+}
+
+/**
+ * Legacy sync variant. Retained for backward compatibility with any caller
+ * that still uses `getDependencyList(...)` directly. The IPC handler has
+ * migrated to `getDependencyListAsync` (see ipc.ts).
+ */
 export function getDependencyList(prefixPath?: string, config?: EnvironmentConfig): DependencyItem[] {
   const installed = prefixPath ? checkInstalledWinetricks(prefixPath, config) : new Set<string>();
 
@@ -460,6 +619,10 @@ export async function installDependencies(
   if (failedDeps.length > 0) {
     log.warn(`Failed dependencies: ${failedDeps.join(", ")}`);
   }
+
+  // PRD v1.5 §4.2.2.3: invalidate the installed-status cache so the next
+  // `getDependencyListAsync` call on the frontend reflects the real state.
+  invalidateDependencyCache(winePrefixPath);
 
   if (failed > 0 && completed === 0) {
     // All failed
