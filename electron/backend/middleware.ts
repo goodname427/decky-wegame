@@ -1,9 +1,12 @@
 import fs from "fs";
 import path from "path";
-import https from "https";
-import http from "http";
 import { spawn } from "child_process";
 import { expandPath } from "./environment";
+import {
+  downloadFromMirrorPool,
+  httpGetJsonFromPool,
+  ghMirrored,
+} from "./mirrors";
 
 // Only user-writable Proton directories are allowed for delete/install
 const USER_PROTON_DIRS = [
@@ -66,38 +69,24 @@ interface GithubRelease {
   body: string;
 }
 
-function httpsGetJson(url: string): Promise<{ statusCode: number; data: string }> {
-  return new Promise((resolve, reject) => {
-    const make = (u: string, depth: number) => {
-      if (depth > 5) return reject(new Error("Too many redirects"));
-      const parsed = new URL(u);
-      const proto = parsed.protocol === "https:" ? https : http;
-      const req = proto.get(u, { headers: { "User-Agent": "WeGame-Launcher", Accept: "application/vnd.github.v3+json" } }, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          make(res.headers.location, depth + 1);
-          return;
-        }
-        let data = "";
-        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
-        res.on("end", () => resolve({ statusCode: res.statusCode || 0, data }));
-      });
-      req.on("error", reject);
-      req.setTimeout(30000, () => { req.destroy(); reject(new Error("Request timeout")); });
-    };
-    make(url, 0);
-  });
-}
-
 /**
- * Fetch latest GE-Proton release info from GitHub.
+ * Fetch latest GE-Proton release info from GitHub. Goes through the shared
+ * mirror pool so it works from inside the GFW without a proxy.
  */
 export async function fetchLatestGeProtonInfo(): Promise<{ version: string; downloadUrl: string; fileName: string; size: number; publishedAt: string; }> {
-  const url = "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest";
-  const res = await httpsGetJson(url);
-  if (res.statusCode !== 200) {
-    throw new Error(`GitHub API returned status ${res.statusCode}`);
+  const rawUrl = "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest";
+  const res = await httpGetJsonFromPool("github-api", ghMirrored(rawUrl), {
+    headers: { Accept: "application/vnd.github.v3+json" },
+  });
+  if (!res.ok) {
+    throw new Error(
+      `GitHub API 所有镜像均失败（${res.triedUrls.length} 个源）：${res.errors.join("; ")}`
+    );
   }
-  const release: GithubRelease = JSON.parse(res.data);
+  const release = res.data as GithubRelease | null;
+  if (!release) {
+    throw new Error("GitHub 返回空 release（可能仓库尚无发布版本）");
+  }
   // Prefer .tar.gz (smaller, more standard). Fallback to .tar.xz
   const asset =
     release.assets.find((a) => a.name.endsWith(".tar.gz")) ||
@@ -112,43 +101,6 @@ export async function fetchLatestGeProtonInfo(): Promise<{ version: string; down
     size: asset.size,
     publishedAt: release.published_at,
   };
-}
-
-function downloadToFile(
-  url: string,
-  destPath: string,
-  onProgress?: (p: { percent: number; downloaded: number; total: number }) => void
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const make = (u: string, depth: number) => {
-      if (depth > 5) return reject(new Error("Too many redirects"));
-      const parsed = new URL(u);
-      const proto = parsed.protocol === "https:" ? https : http;
-      proto.get(u, { headers: { "User-Agent": "WeGame-Launcher" } }, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          make(res.headers.location, depth + 1);
-          return;
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`Download failed with status ${res.statusCode}`));
-          return;
-        }
-        const total = parseInt(res.headers["content-length"] || "0", 10);
-        let downloaded = 0;
-        const ws = fs.createWriteStream(destPath);
-        res.on("data", (chunk: Buffer) => {
-          downloaded += chunk.length;
-          if (onProgress && total > 0) {
-            onProgress({ percent: Math.round((downloaded / total) * 100), downloaded, total });
-          }
-        });
-        res.pipe(ws);
-        ws.on("finish", () => { ws.close(); resolve(); });
-        ws.on("error", (err) => { try { fs.unlinkSync(destPath); } catch { /* ignore */ } reject(err); });
-      }).on("error", reject);
-    };
-    make(url, 0);
-  });
 }
 
 function extractTarball(tarPath: string, destDir: string): Promise<void> {
@@ -187,11 +139,27 @@ export async function downloadAndInstallGeProton(
 
     onProgress?.({ phase: "download", percent: 1, message: `正在下载 ${info.version}...` });
 
-    await downloadToFile(info.downloadUrl, tarPath, (p) => {
-      // Map 0-100 of download into 1-90
-      const mapped = 1 + Math.round(p.percent * 0.89);
-      onProgress?.({ phase: "download", percent: mapped, message: `下载中 ${p.percent}%` });
-    });
+    const dl = await downloadFromMirrorPool(
+      "github-release",
+      ghMirrored(info.downloadUrl),
+      {
+        destPath: tarPath,
+        // Real GE-Proton tarballs are 300+ MB; anything smaller is a 404 HTML
+        // body slipping through. 50 MB keeps headroom for slimmer releases.
+        minBytes: 50_000_000,
+        timeoutMs: 10 * 60_000,
+        onProgress: (p) => {
+          // Map 0-100 of download into 1-90
+          const mapped = 1 + Math.round(p.percent * 0.89);
+          onProgress?.({ phase: "download", percent: mapped, message: `下载中 ${p.percent}%（源：${new URL(p.sourceUrl).host}）` });
+        },
+      }
+    );
+    if (!dl.ok) {
+      throw new Error(
+        `GE-Proton 下载失败（尝试了 ${dl.triedUrls.length} 个镜像）：${dl.errors.slice(0, 3).join("; ")}`
+      );
+    }
 
     onProgress?.({ phase: "extract", percent: 92, message: "正在解压..." });
     await extractTarball(tarPath, installDir);
@@ -218,8 +186,24 @@ export async function installWinetricksUserlocal(): Promise<{ success: boolean; 
     const binDir = expandPath("~/.local/bin");
     fs.mkdirSync(binDir, { recursive: true });
     const dest = path.join(binDir, "winetricks");
-    const url = "https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks";
-    await downloadToFile(url, dest);
+    const rawUrl = "https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks";
+    const dl = await downloadFromMirrorPool(
+      "github-raw",
+      ghMirrored(rawUrl),
+      {
+        destPath: dest,
+        // winetricks script is a single shell file around 1 MB; set a loose
+        // lower bound to reject proxies that return a tiny HTML error page.
+        minBytes: 100_000,
+        timeoutMs: 60_000,
+      }
+    );
+    if (!dl.ok) {
+      return {
+        success: false,
+        error: `winetricks 脚本下载失败（${dl.triedUrls.length} 个镜像均不可用）：${dl.errors.slice(0, 3).join("; ")}`,
+      };
+    }
     fs.chmodSync(dest, 0o755);
     return { success: true, path: dest };
   } catch (err) {
