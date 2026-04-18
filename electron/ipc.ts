@@ -73,7 +73,8 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       await installWinetricks(args.password);
       return { success: true };
     } catch (err) {
-      return { success: false, error: err.message };
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
     }
   });
 
