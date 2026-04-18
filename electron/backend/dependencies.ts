@@ -468,7 +468,7 @@ function runWinetricksSingle(
   backendEnv: Record<string, string>
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const childEnv = { ...backendEnv, WINEPREFIX: prefixPath };
+    const childEnv: Record<string, string> = { ...backendEnv, WINEPREFIX: prefixPath };
     log.info(`[winetricks:${wtId}] spawn: winetricks -q --unattended ${wtId}`);
     log.info(`[winetricks:${wtId}]   WINEPREFIX=${childEnv.WINEPREFIX}`);
     log.info(`[winetricks:${wtId}]   W_OPT_UNATTENDED=${childEnv.W_OPT_UNATTENDED} WINETRICKS_GUI=${childEnv.WINETRICKS_GUI}`);
