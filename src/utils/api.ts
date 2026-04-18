@@ -101,6 +101,16 @@ export const scanSystemDependencies = () =>
 export const validateDependencyPath = (depId: string, path: string) =>
   invoke("validate_dependency_path", { depId, path });
 
+// Middleware management (Proton / Wine / winetricks)
+export const deleteProtonVersion = (path: string) =>
+  invoke("delete_proton_version", { path });
+export const fetchLatestGeProton = () =>
+  invoke("fetch_latest_ge_proton");
+export const downloadGeProton = () =>
+  invoke("download_ge_proton");
+export const installWinetricksUserlocal = () =>
+  invoke("install_winetricks_userlocal");
+
 // Update check
 export const checkForUpdate = (channel: string) =>
   invoke("check_for_update", { channel });

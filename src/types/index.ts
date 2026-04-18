@@ -89,3 +89,36 @@ export interface UpdateInfo {
   published_at?: string;
   html_url?: string;
 }
+
+// Middleware (Wine / winetricks / Proton) scan types
+export interface ScannedPath {
+  path: string;
+  version?: string;
+  source: string;
+}
+
+export interface DependencyScanResult {
+  id: string;
+  name: string;
+  description: string;
+  found: boolean;
+  paths: ScannedPath[];
+  install_hint: string;
+  download_url?: string;
+}
+
+export interface GeProtonInfo {
+  success: boolean;
+  version?: string;
+  downloadUrl?: string;
+  fileName?: string;
+  size?: number;
+  publishedAt?: string;
+  error?: string;
+}
+
+export interface MiddlewareDownloadProgress {
+  phase: "download" | "extract" | "done";
+  percent: number;
+  message?: string;
+}

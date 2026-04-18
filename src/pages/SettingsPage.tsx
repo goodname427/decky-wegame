@@ -56,7 +56,7 @@ export default function SettingsPage({ onOpenSetupWizard }: SettingsPageProps) {
 
       {/* Sub-tab content */}
       <div className="animate-fade-in">
-        {activeTab === "dependencies" && <Dependencies />}
+        {activeTab === "dependencies" && <Dependencies onOpenSetupWizard={onOpenSetupWizard} />}
         {activeTab === "advanced" && <Settings />}
         {activeTab === "update" && <UpdateChecker />}
       </div>

@@ -1,58 +1,69 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "../utils/api";
 import {
-  Save,
-  RotateCcw,
-  FolderOpen,
-  Cpu,
   Terminal,
-  Upload,
-  AlertTriangle,
   Trash2,
   CheckCircle2,
+  Info,
 } from "lucide-react";
-import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
+import useEnvironment from "../hooks/useEnvironment";
 import ConfirmDialog from "../components/ConfirmDialog";
 
-export default function Settings() {
-  const { config, saveEnvironment, systemInfo } = useEnvironment();
-  const { versions: protonVersions } = useProtonVersions();
+const AUTOSAVE_DEBOUNCE_MS = 500;
 
-  const [localConfig, setLocalConfig] = useState(config || {
-    wine_prefix_path: "",
-    proton_path: "",
-    wegame_install_path: "",
-    extra_env_vars: {},
-    launch_args: "",
-  });
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [cleanupStatus, setCleanupStatus] = useState<"idle" | "success" | "error">("idle");
+export default function Settings() {
+  const { config, saveEnvironment } = useEnvironment();
+
+  const [launchArgs, setLaunchArgs] = useState<string>(config.launch_args || "");
   const [envVars, setEnvVars] = useState<[string, string][]>(
     Object.entries(config.extra_env_vars || {})
   );
+  const [saved, setSaved] = useState(false);
+  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [showClearLaunchArgsConfirm, setShowClearLaunchArgsConfirm] = useState(false);
+  const [cleanupStatus, setCleanupStatus] = useState<"idle" | "success" | "error">("idle");
 
-  // Sync when config changes
-  if (JSON.stringify(localConfig) !== JSON.stringify(config)) {
-    setLocalConfig(config);
-    setEnvVars(Object.entries(config.extra_env_vars || {}));
+  // Signature of the latest config fetched from backend, used to detect external changes
+  const configSigRef = useRef<string>("");
+  const currentSig = JSON.stringify({ launch_args: config.launch_args, extra_env_vars: config.extra_env_vars });
+  if (currentSig !== configSigRef.current) {
+    configSigRef.current = currentSig;
+    // Pull new values when config changes externally (e.g. config file reload)
+    if (launchArgs !== (config.launch_args || "")) setLaunchArgs(config.launch_args || "");
+    const incoming = Object.entries(config.extra_env_vars || {}) as [string, string][];
+    if (JSON.stringify(incoming) !== JSON.stringify(envVars)) setEnvVars(incoming);
   }
 
-  function updateField<K extends keyof typeof localConfig>(key: K, value: (typeof localConfig)[K]) {
-    setLocalConfig((prev: typeof localConfig) => ({ ...prev, [key]: value }));
-    setSaved(false);
-  }
-
-  async function handleSave() {
-    const newEnv: Record<string, string> = {};
-    for (const [k, v] of envVars as [string, string][]) {
-      if (k.trim()) newEnv[k.trim()] = v;
-    }
-    await saveEnvironment({ ...localConfig, extra_env_vars: newEnv });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
+  // Debounced auto-save
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const newEnv: Record<string, string> = {};
+      for (const [k, v] of envVars) {
+        if (k.trim()) newEnv[k.trim()] = v;
+      }
+      // Only save if values actually differ from config
+      const nextConfig = { ...config, launch_args: launchArgs, extra_env_vars: newEnv };
+      if (
+        nextConfig.launch_args !== config.launch_args ||
+        JSON.stringify(nextConfig.extra_env_vars) !== JSON.stringify(config.extra_env_vars)
+      ) {
+        saveEnvironment(nextConfig)
+          .then(() => {
+            setSaved(true);
+            setTimeout(() => setSaved(false), 2000);
+          })
+          .catch((err: unknown) => {
+            console.error("Auto-save failed:", err);
+          });
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchArgs, envVars]);
 
   function addEnvVar() {
     setEnvVars([...envVars, ["", ""]]);
@@ -60,7 +71,6 @@ export default function Settings() {
 
   function removeEnvVar(index: number) {
     setEnvVars(envVars.filter((_, i) => i !== index));
-    setSaved(false);
   }
 
   function updateEnvVar(index: number, keyOrValue: "key" | "value", val: string) {
@@ -71,7 +81,6 @@ export default function Settings() {
       updated[index] = [updated[index][0], val];
     }
     setEnvVars(updated);
-    setSaved(false);
   }
 
   async function handleCleanupLogs() {
@@ -88,55 +97,18 @@ export default function Settings() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Path Configuration */}
-      <div className="glass-card p-5">
-        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-gray-100">
-          <FolderOpen className="h-4.5 w-4.5 text-primary" />
-          路径配置
-        </h3>
-
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-300">Wine 前缀路径</label>
-            <input
-              type="text"
-              value={localConfig.wine_prefix_path}
-              onChange={(e) => updateField("wine_prefix_path", e.target.value)}
-              placeholder="~/.local/share/decky-wegame/prefix"
-              className="input-field font-mono text-sm"
-            />
-            <p className="mt-1 text-xs text-gray-500">WeGame 的 Wine 兼容环境存储目录</p>
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-300">Proton 可执行文件路径</label>
-            <select
-              value={localConfig.proton_path}
-              onChange={(e) => updateField("proton_path", e.target.value)}
-              className="input-field cursor-pointer"
-            >
-              <option value="">-- 自动检测（推荐） --</option>
-              {protonVersions.map((v) => (
-                <option key={v.path} value={v.path}>
-                  {v.name}{v.is_recommended ? " ★" : ""}
-                </option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-gray-500">留空则自动选择最佳 Proton 版本</p>
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-300">WeGame 安装路径</label>
-            <input
-              type="text"
-              value={localConfig.wegame_install_path}
-              onChange={(e) => updateField("wegame_install_path", e.target.value)}
-              placeholder="Wine 前缀内的 WeGame 安装目录"
-              className="input-field font-mono text-sm"
-            />
-            <p className="mt-1 text-xs text-gray-500">通常自动检测，仅在异常情况需要修改</p>
-          </div>
+      {/* Header note: autosave */}
+      <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-gray-400">
+        <Info className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+        <div className="flex-1">
+          修改将在停止输入后 <strong className="text-gray-200">自动保存</strong>（无需点击按钮）。路径配置、重置环境等已迁移到「依赖管理」子页签。
         </div>
+        {saved && (
+          <span className="flex items-center gap-1 text-neon-green animate-fade-in">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            已保存
+          </span>
+        )}
       </div>
 
       {/* Environment Variables */}
@@ -167,6 +139,7 @@ export default function Settings() {
               <button
                 onClick={() => removeEnvVar(idx)}
                 className="shrink-0 mt-1 p-1 text-gray-500 hover:text-neon-red transition-colors"
+                title="删除该环境变量"
               >✕</button>
             </div>
           ))}
@@ -186,13 +159,7 @@ export default function Settings() {
             <button
               key={k}
               onClick={() => {
-                addEnvVar();
-                setEnvVars((prev) => {
-                  const next = [...prev];
-                  next[next.length - 1] = [k, v];
-                  return next;
-                });
-                setSaved(false);
+                setEnvVars((prev) => [...prev, [k, v]]);
               }}
               className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-gray-400 hover:bg-primary/10 hover:text-primary transition-all"
             >
@@ -210,8 +177,8 @@ export default function Settings() {
         </h3>
 
         <textarea
-          value={localConfig.launch_args}
-          onChange={(e) => updateField("launch_args", e.target.value)}
+          value={launchArgs}
+          onChange={(e) => setLaunchArgs(e.target.value)}
           placeholder="额外的启动参数，每行一个..."
           rows={4}
           className="input-field resize-y font-mono text-xs leading-relaxed"
@@ -220,8 +187,9 @@ export default function Settings() {
         <div className="mt-2 flex justify-between text-xs text-gray-500">
           <span>传递给 WeGame.exe 的额外命令行参数</span>
           <button
-            onClick={() => updateField("launch_args", "")}
-            className="hover:text-gray-300 transition-colors"
+            onClick={() => setShowClearLaunchArgsConfirm(true)}
+            disabled={!launchArgs}
+            className="hover:text-gray-300 transition-colors disabled:opacity-40"
           >恢复默认</button>
         </div>
       </div>
@@ -270,52 +238,6 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Danger Zone */}
-      <div className="border border-neon-red/20 rounded-xl overflow-hidden">
-        <div className="bg-neon-red/5 px-5 py-3 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-neon-red" />
-          <span className="font-semibold text-sm text-neon-red">危险操作区</span>
-        </div>
-        <div className="p-5 space-y-3">
-          <p className="text-xs text-gray-400">以下操作不可逆，请谨慎使用。</p>
-          <button
-            onClick={() => setShowResetConfirm(true)}
-            className="neon-danger text-sm w-full sm:w-auto"
-          >
-            重置 Wine Prefix 环境
-          </button>
-        </div>
-      </div>
-
-      {/* Save button */}
-      <div className="flex items-center gap-3 pt-2">
-        <button onClick={handleSave} className="neon-primary flex items-center gap-2 text-sm px-6">
-          <Save className="h-4 w-4" />
-          保存设置
-        </button>
-        {saved && (
-          <span className="text-sm text-neon-green animate-fade-in">已保存 ✓</span>
-        )}
-      </div>
-
-      {/* Reset confirmation dialog */}
-      <ConfirmDialog
-        open={showResetConfirm}
-        title="重置 Wine Prefix 环境"
-        message="这将彻底删除当前 Wine 前缀中的所有数据，包括：已安装的 Windows 程序、注册表配置、依赖组件等。此操作不可撤销。确定要继续吗？"
-        confirmText="确认重置"
-        danger
-        onConfirm={async () => {
-          try {
-            await invoke("reset_environment", { config: localConfig });
-            setShowResetConfirm(false);
-          } catch (err) {
-            console.error("Reset error:", err);
-          }
-        }}
-        onCancel={() => setShowResetConfirm(false)}
-      />
-
       {/* Log cleanup confirmation dialog */}
       <ConfirmDialog
         open={showCleanupConfirm}
@@ -327,6 +249,19 @@ export default function Settings() {
           await handleCleanupLogs();
         }}
         onCancel={() => setShowCleanupConfirm(false)}
+      />
+
+      {/* Clear launch args confirm */}
+      <ConfirmDialog
+        open={showClearLaunchArgsConfirm}
+        title="恢复默认启动参数"
+        message="这将清空当前所有启动参数。确定要继续吗？"
+        confirmText="确认清空"
+        onConfirm={() => {
+          setLaunchArgs("");
+          setShowClearLaunchArgsConfirm(false);
+        }}
+        onCancel={() => setShowClearLaunchArgsConfirm(false)}
       />
     </div>
   );

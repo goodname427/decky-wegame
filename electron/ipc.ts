@@ -4,9 +4,15 @@ import { createPrefix, deletePrefix, prefixExists, getPrefixSizeMb, getPrefixPat
 import { scanProtonVersions, validateProtonPath, checkWinetricksAvailable, checkWineAvailable } from "./backend/proton";
 import { launchWegame, stopWegame, checkWegameStatus } from "./backend/launcher";
 import { generateDesktopEntry, addToSteam, listWegameGames } from "./backend/steam";
-import { getDependencyList, installDependencies } from "./backend/dependencies";
+import { getDependencyList, installDependencies, installWinetricks } from "./backend/dependencies";
 import { checkForUpdate, downloadAndInstallUpdate, UpdateChannel } from "./backend/updater";
 import { scanAllDependencies, validateDependencyPath } from "./backend/dep-scanner";
+import {
+  deleteProtonVersion,
+  downloadAndInstallGeProton,
+  fetchLatestGeProtonInfo,
+  installWinetricksUserlocal,
+} from "./backend/middleware";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import { cleanupAllLogs } from "./backend/logger";
 import os from "os";
@@ -179,6 +185,31 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle("validate_dependency_path", async (_event, args: { depId: string; path: string }) => {
     return validateDependencyPath(args.depId, args.path);
+  });
+
+  // Middleware management (Proton / winetricks)
+  ipcMain.handle("delete_proton_version", async (_event, args: { path: string }) => {
+    return deleteProtonVersion(args.path);
+  });
+
+  ipcMain.handle("fetch_latest_ge_proton", async () => {
+    try {
+      const info = await fetchLatestGeProtonInfo();
+      return { success: true, ...info };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("download_ge_proton", async () => {
+    const win = getMainWindow();
+    return await downloadAndInstallGeProton((p) => {
+      win?.webContents.send("middleware-download-progress", p);
+    });
+  });
+
+  ipcMain.handle("install_winetricks_userlocal", async () => {
+    return await installWinetricksUserlocal();
   });
 
   // Update check
