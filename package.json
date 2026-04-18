@@ -1,7 +1,7 @@
 {
   "name": "decky-wegame",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.7.0",
   "description": "A tool to run Tencent WeGame on Steam Deck via Proton/Wine",
   "author": {
     "name": "goodname427",
