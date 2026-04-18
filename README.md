@@ -2,7 +2,7 @@
 
 一款运行在 SteamOS / Steam Deck 上的独立桌面应用，用于在 Linux 环境下配置和启动腾讯 WeGame 游戏平台。
 
-> 当前版本：**v1.9.0** · 需求定义见 [PRD.md](./PRD.md)，关键开发记录见 [DEVLOG.md](./DEVLOG.md)
+> 当前版本：**v1.9.1** · 需求定义见 [PRD.md](./PRD.md)，关键开发记录见 [DEVLOG.md](./DEVLOG.md)
 
 ## 功能特性
 
@@ -13,7 +13,7 @@
   4. 执行安装（前置 `wineboot --init` 兜底；未勾选任何依赖时会跳过 winetricks，仅创建 Wine 环境）
   5. 安装 WeGame（首推从 [wegame.com.cn](https://www.wegame.com.cn/) 下载官方 `WeGameSetup.exe` 后「选择本地安装器文件」导入，另提供「打开官网」与「在线下载（实验）」两个兜底入口）
 - **配置一致性** - 「安装向导」与「依赖管理页」共享同一套配置组件，能力对等、行为一致，不会出现「向导能做、管理页做不了」或反之的情况
-- **中间层管理** - 扫描 / 切换 / 删除 Proton；下载安装最新 GE-Proton；一键将 winetricks 安装到用户目录（免 sudo）
+- **中间层管理** - 扫描 / 切换 / 删除 Proton（自动识别 `compatibilitytools.d/` 下的 GE-Proton 与 `steamapps/common/Proton *` 下的 Valve 官方 Proton）；下载安装最新 GE-Proton；一键将 winetricks 安装到用户目录（免 sudo）
 - **WeGame 本体管理** - 依赖管理页提供 WeGame 安装状态卡片，可直接「用本地文件重装」或「清缓存并在线重装」，无需重走向导
 - **依赖管理** - 支持复扫、按需安装、**单项重装**（hover 即可触发）、失败重试、跳过与缓存清理，自动从国内镜像预拉取以规避境外源失败
 - **诊断面板** - 一键跑完 Proton 版本 / 网络 / DNS / TLS / Wine 状态等检查，失败项给出可执行建议

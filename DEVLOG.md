@@ -6,6 +6,20 @@
 
 ---
 
+## 2026-04-18 — Proton 扫描范围扩到 SteamOS 自带的 Valve 官方 Proton（v1.9.1）
+- **为什么做**：实测发现 `GE-Proton7-20` 在当前 SteamOS（`6.11.11-valve26`）上 wineboot 会踩 NULL（`winex11!create_whole_window+0x1b7` 在 32-bit code 里解引用 `0x00000000`），新安装的 `GE-Proton10-34` 可以正常完成 wineboot，但并非所有 Steam Deck 都能联网下载 GE-Proton；而 Steam 自带的 Valve 官方 `Proton 8.0 / Proton - Experimental / Proton Hotfix` 就在 `steamapps/common/` 里随 Steam 下发，是**不用额外下载就必然可用**的兜底 Proton。此前 `scanProtonVersions` 只看 `compatibilitytools.d/*`，这些官方 Proton 全部对用户不可见。
+- **做了什么**：
+  - 把搜索根从简单的 `string[]` 改成 `{ path, kind: "compat-tools" | "steam-common" }[]`，新增两条 `steam-common` 路径（`~/.steam/root/steamapps/common/` 与 `~/.local/share/Steam/steamapps/common/`）。
+  - `steam-common` 目录下**只接受名字匹配 `/^Proton([\s-].*)?$/i` 的子目录**——这个目录同时包含几百个游戏本体目录，不过滤就会把游戏当 Proton 扫进来。
+  - 用 `fs.realpathSync(protonFile)` 做去重键：`~/.steam/root` 在 SteamOS 上通常是 `~/.local/share/Steam` 的软链，不去重会让同一个安装出现两次。
+  - 排序规则细化为 `GE-Proton → Valve 官方 Proton → 其他`；版本号比较改用 `localeCompare` 的 `numeric: true`，避免把 `10` 排到 `9` 前面。
+  - `extractProtonVersion` 里多剥一层 `^Proton[\s-]*` 前缀，让 `Proton 8.0 → 8.0`、`Proton - Experimental → Experimental` 显示更干净。
+- **关键决策**：
+  - **is_recommended 只给 GE-Proton**。Valve 官方 Proton 能看见、能选，但不作为默认 —— 因为 GE-Proton 对 DX9 游戏、字体、CJK 表现仍然更好，WeGame 启动后拉起的老游戏更吃这套。
+  - **不对 Valve 官方 Proton 启用 "删除" 按钮**。`compatibilitytools.d/` 下的 Proton 本应用独占，可安全删除；但 `steamapps/common/Proton *` 是 Steam 自己下发管理的，应用不应插手（删除后 Steam 会重新下载，徒增困惑）。
+  - **不改 `proton run` 调用方式**，仍保持直接 `spawn(wine64, ...)` 的现有架构。那套涉及 Steam Runtime 容器的方案（上一轮讨论里的"方向 A"）工作量大，在 GE-Proton10-34 已经解决 wineboot 问题的前提下不是当前迫切需求。
+- **关键文件**：`electron/backend/proton.ts`（重写 `scanProtonVersions`、新增 `VALVE_PROTON_DIR_PREFIX_RE`、去重与排序细化）、`PRD.md` §4.2.3、`README.md`、`package.json`。
+
 ## 2026-04-18 — 日志系统重构为 Unreal Engine 风格 + wineboot 观测性增强（v1.9.0）
 - **为什么做**：v1.8.2 的日志按模块拆成 `dependencies_*.log / installer_*.log / launcher_*.log` 若干文件，外加一个始终追加写入的"总日志"——分文件的初衷被总日志直接架空，且发生问题时要同时翻多个文件才能对上时序；更关键的是 wineboot 的 stdout/stderr 从来没被落盘（只做了心跳计时），导致「wineboot 退出码 0、前缀却不健康」时完全拿不到原始输出，无法判因。
 - **做了什么**：

@@ -8,7 +8,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **当前版本**：v1.9.0
+- **当前版本**：v1.9.1
 - **最后更新**：2026-04-18
 
 ---
@@ -324,6 +324,11 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 - **查看所有扫描到的版本**
   - 通过 `scan_system_dependencies` + `get_proton_versions` 聚合展示
   - 每个版本显示：名称、版本号、来源标签（PATH / Proton 内置 / Flatpak / 用户目录 / 自定义路径等）
+  - Proton 扫描范围覆盖**两类目录**：
+    1. 第三方兼容层：`~/.steam/root/compatibilitytools.d/`、`~/.local/share/Steam/compatibilitytools.d/`、`/usr/share/steam/compatibilitytools.d/`（目录下任意子目录只要含可执行的 `proton` 脚本即视为候选）
+    2. Valve 官方 Proton：`~/.steam/root/steamapps/common/`、`~/.local/share/Steam/steamapps/common/`（由于此目录同时包含游戏本体，**只认名字匹配 `Proton*` 的子目录**，如 `Proton 8.0` / `Proton - Experimental` / `Proton Hotfix`）
+  - 同一个 `proton` 脚本被两条路径命中时（`~/.steam/root` 通常是 `~/.local/share/Steam` 的软链）按 `realpath` 去重
+  - 排序：GE-Proton → Valve 官方 Proton → 其他（同组内按版本号倒序）；默认推荐（`is_recommended`）仍仅为 GE-Proton
 - **切换当前版本**
   - 对 Proton：点击任一版本可切换 `config.proton_path`
   - 对 Wine / winetricks：当前由系统 PATH 决定，UI 只做展示，不强制切换
