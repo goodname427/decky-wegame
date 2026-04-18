@@ -1,60 +1,19 @@
 # 开发日志 (Development Log)
 
-本文件记录 WeGame Launcher 项目的**重要架构变更、关键技术决策和核心功能实现**。
+本文件记录 WeGame Launcher 项目的**关键架构变更、重大技术决策和会改变用户预期行为的核心修复**。
+
+> 编写约束：**不写流水账** —— 简单 bug 修复、琐碎 refactor、文件移动等由 `git log` 承担；DEVLOG 面向"半年后的自己或新加入的维护者"，需要能凭此快速还原某次关键改动的来龙去脉。
 
 ---
 
-## 2026-04-16 — 项目初始化
-- **目标**：在 SteamOS / Steam Deck 上运行腾讯 WeGame
-- **技术栈**：React + TypeScript + TailwindCSS（前端），Tauri + Rust（后端）
+## 2026-04-16 ～ 2026-04-17 — 项目初始化与技术栈确立
 
-## 2026-04-17 — 从 Tauri 迁移到 Electron
-- **决策原因**：Tauri 的 WebKitGTK/EGL 兼容性问题无法在 Steam Deck 上解决
-- **技术优势**：Electron 自带 Chromium，不依赖系统 WebView，彻底解决 EGL 问题
-- **迁移效果**：前端代码零改动，后端逻辑从 Rust 改为 Node.js/TypeScript
+- **项目目标**：在 SteamOS / Steam Deck 上运行腾讯 WeGame 平台及其游戏。
+- **核心架构决策（Tauri → Electron）**：最初采用 React + Tauri + Rust 的技术栈，但 Tauri 依赖 WebKitGTK / EGL，在 Steam Deck 上存在长期无法解决的兼容性问题（白屏、EGL 初始化失败等）。最终迁移到 Electron：自带 Chromium，不依赖系统 WebView；前端 React/TS 代码零改动，后端逻辑从 Rust 改为 Node.js/TypeScript，通过 IPC + contextBridge preload 对接。
+- **首版功能骨架**：4 个顶层页签（Dashboard / Launcher / Settings / About）、首次启动自动弹 SetupWizard 环境向导、按模块拆分的会话级日志系统、依赖扫描 / 安装 / 跳过体系、双渠道更新检查。
+- **早期迭代**（不逐条记录）：包含 wizard 结构若干次调整、winetricks 密码流程的 IPC 注册补齐等小修正；详情可在 `git log` 中检索。
 
-## 2026-04-18 — 核心功能架构
-- **UI 重构**：将 6 个页签精简为 4 个，优化用户体验
-- **日志系统**：实现会话级日志管理，支持日志轮转和自动清理
-- **依赖管理**：完整的依赖扫描、安装、跳过功能体系
-- **环境检查**：自动检测 Wine/winetricks，提供安装指引
-- **版本更新**：支持正式版和开发版双渠道更新检测
-
-## 2026-04-18 — 技术优化
-- **异步处理**：将同步命令执行改为异步，避免 UI 阻塞
-- **功能重构**：优化依赖管理与配置向导的分工，减少功能重复
-
-## 2026-04-18 — 安装向导问题修复
-- **修复winetricks安装流程**：修复输入密码后卡住的问题，确保密码验证后能正确安装winetricks并继续依赖安装
-- **新增全局跳过功能**：添加整个安装向导的跳过功能，用户可在任何步骤选择跳过wine、proton、依赖等所有配置步骤
-- **改进用户体验**：在导航栏添加全局跳过按钮，支持在任何步骤快速跳过整个安装过程
-
-## 2026-04-18 — 密码验证问题修复
-- **修复密码错误提示问题**：修复前端调用 install_winetricks 但后端未注册 IPC 处理函数的问题
-- **改进错误处理**：后端正确识别密码错误类型（"Sorry, try again"、"incorrect password"、"Authentication failure"）
-- **完善IPC通信**：添加 install_winetricks IPC 处理函数，确保密码验证流程正常
-
-## 2026-04-18 — 需求调整：移除步骤4跳过功能
-- **简化跳过功能**：根据PRD要求，移除步骤4"跳过依赖安装"功能，只保留全局跳过功能
-- **代码清理**：移除相关状态变量、确认对话框、跳过按钮和提示框
-- **保持一致性**：确保跳过功能只在向导底部导航栏提供，避免功能重复
-
-## 2026-04-18 — 需求调整：帮助页面快速更新入口改为跳转
-- **修改导航逻辑**：将About页面的"检查更新"按钮改为跳转到"版本更新"页签
-- **路由状态传递**：通过路由状态传递activeTab参数，自动切换到更新页签
-- **简化功能**：移除About页面中的直接版本检查功能，避免功能重复
-- **用户体验优化**：用户点击后直接进入完整的版本更新界面，提供更多功能选项
-
-## 2026-04-18 — 需求调整：环境设置向导结构优化
-- **步骤重构**：将原5个步骤优化为4个步骤，提升用户体验
-- **步骤1：确认中间层** - 合并原步骤1（环境检查）和步骤2（选择Proton），统一检测Wine、winetricks、Proton等中间层环境
-- **步骤2：确认依赖** - 保持不变，专注于Windows运行时组件选择
-- **步骤3：路径选择** - 优化为配置下载内容保存路径，包括中间层安装路径、依赖缓存路径、临时下载目录
-- **步骤4：执行安装** - 保持不变，负责最终安装执行
-- **产品命名优化**：对步骤名称进行产品性优化，提升用户理解度
-- **功能整合**：减少步骤数量，简化用户操作流程，提高向导效率
-
-## 2026-04-18 — 设置界面与依赖管理重构
+## 2026-04-18 — 设置界面与依赖管理重构（v1.2）
 - **设置分区重划分**：严格按照 PRD v1.2 重新划分"设置"页下的子功能；"基础设置"页签改为立即生效（防抖 500ms 自动保存），不再提供"保存设置"按钮；移除了路径配置、重置 Wine Prefix、重新配置环境这三类入口
 - **依赖管理重构**：将全部日常维护能力收敛到"依赖管理"子页签，顶部工具栏新增"重新配置环境"（重新打开 SetupWizard）
 - **新增中间层管理**：新增 `MiddlewareManager` 区块，支持 Wine / winetricks / Proton 的扫描/切换/自定义路径/删除（用户目录下的 Proton）/下载（GE-Proton 一键安装、winetricks 脚本一键安装到 `~/.local/bin`）
@@ -65,7 +24,7 @@
 - **修复潜在 bug**：`installWinetricks` 在 `ipc.ts` 中此前未正确 import，导致 `install_winetricks` handler 运行时报错，本次一并修复
 - **关键文件**：`PRD.md`、`DEVLOG.md`、`src/pages/Settings.tsx`、`src/pages/Dependencies.tsx`、`src/pages/SettingsPage.tsx`、`src/utils/api.ts`、`src/types/index.ts`、`electron/ipc.ts`、`electron/backend/middleware.ts`
 
-## 2026-04-18 — Bug 修复：依赖安装失败 `wineserver not found`
+## 2026-04-18 — 依赖安装失败根因修复：Proton 后端注入 + winetricks 无人值守化（v1.3）
 - **问题现象**：点"安装缺失项"后进度条前进，但每一项 winetricks 安装都失败；日志反复出现 `warning: wineserver not found!`，退出码 1
 - **根因**：SteamOS / Steam Deck 系统里没有独立的 `wine` / `wineserver`（wine 藏在 Proton 目录里），而 `runWinetricksSingle` 只用了 `process.env + WINEPREFIX`，没把所选 Proton 的 `files/bin` 注入到子进程 `PATH`，winetricks 找不到 wine 后端
 - **方案（PRD v1.3 §4.2.2.1）**：依赖安装始终使用当前所选 Proton 内置的 wine/wineserver
@@ -77,7 +36,7 @@
 - **与启动器的一致性**：依赖安装使用的 wine 版本 = 启动 WeGame 使用的 wine 版本（都来自 `config.proton_path`），避免 prefix 状态错乱
 - **关键文件**：`PRD.md`、`DEVLOG.md`、`electron/backend/dependencies.ts`、`electron/ipc.ts`
 
-## 2026-04-18 — Bug 修复：依赖安装卡在第一步不动（winetricks hang）
+## 2026-04-18 — 依赖安装 hang 根因修复：winetricks env + LD_LIBRARY_PATH（v1.3 补强）
 - **问题现象**：Wine 后端已经成功注入，但 `[1/13] Installing: dotnet46` 后只打了一行 `Executing cd /usr/local/bin` 就不动了，没有任何进展
 - **根因**（多重因素叠加）：
   1. `winetricks --unattended` 强度不够，遇到 EULA 提示仍可能 fallback 到 GUI；没 DISPLAY 时又 fallback 到 stdin，直接阻塞
@@ -93,7 +52,7 @@
   - 增加 spawn 启动调试日志（打印 WINEPREFIX / 无人值守开关）
 - **关键文件**：`DEVLOG.md`、`electron/backend/dependencies.ts`
 
-## 2026-04-18 — PRD v1.4 重大策略调整：依赖最小化 + 镜像源兜底 + 运行诊断
+## 2026-04-18 — 重大策略调整：依赖最小化 + 镜像源兜底 + 运行诊断（v1.4）
 - **背景**：实测 WeGame 能启动，但安装进度卡 0% 不动。同时依赖安装屡屡失败（微软 CDN 证书不被信任、`web.archive.org` IPv6 网络不可达）。这两类现象说明当前"一次性预装一堆 Windows 依赖"的策略既不解决真实问题，又制造新问题。
 - **关键技术决策**：
   1. **依赖最小化**：WeGame 主体是 C++/Qt，不依赖 .NET；Proton-GE 已内置 vcrun/d3dx9/corefonts 等常用依赖；.NET 在 Wine 64bit prefix 下长期不稳定。因此默认勾选依赖从 13 项缩减到 2 项（`corefonts` + `cjkfonts`），其余全部"按需安装"。
@@ -354,5 +313,45 @@ HTTP/1.1 404 Not Found
 ### 关键文件
 - 修改：`electron/backend/wegame_installer.ts`（+312 / -50）、`electron/ipc.ts`（+35）、`src/utils/api.ts`（+8）、`src/components/config/WeGameInstaller.tsx`（+196 / -40）
 - 同步：`package.json` v1.8.0 → v1.8.1、`README.md`（顶部版本号 + 功能特性 WeGame 本体管理段 + 使用说明 step 5）、`PRD.md`（顶部元信息 + §4.1 Step 5 UI/流程/IPC 表 + §4.2.6 `<WeGameInstaller>` IPC 行 + Changelog v1.8.1 条目）、`DEVLOG.md`（本条目）
+
+## 2026-04-18 — 文档治理：明确 README / PRD / DEVLOG 三者职责，收敛到 Agent 规则文件
+
+### 背景
+随着版本迭代，三份 Markdown 文档出现了定位交叉：
+- **README.md** 里开始夹带大量 `（v1.8 重构）` / `（v1.8.1 调整）` 之类的版本沿革标签，让首次接触软件的用户在"了解软件能做什么"时被迫穿越多个版本的历史叙述；
+- **PRD.md** 里同样充满版本标签，且维护着一份与 DEVLOG 重复的 Changelog（§九），加上附录里保留的 `v1.1 修复详情` 等早已不具备"需求定义"价值的段落；
+- **DEVLOG.md** 早期条目（2026-04-16 ～ 2026-04-17）写成了每次 refactor、每次 typo 级别的流水账，新维护者读到这些条目时要花大量精力才能找到真正的"关键改动"。
+
+三者边界模糊带来的直接后果：**对用户友好**、**对开发者有用**、**长期可追溯**这三件事都没做好，且文档互相引用导致一处改动要同步改三份。
+
+### 变更概览
+
+**扩充项目内已有的 Agent 规则文件 `.codebuddy/rules/devoloper.md`**（原先只覆盖需求 / Git / DEVLOG / 版本同步四类规则），新增 **§0 三份核心文档的定位与边界** 小节，明确带出：
+- 用一张表把 README / PRD / DEVLOG 的读者 / 定位 / 内容要求讲清楚：README 面向用户 + 禁版本沿革标签；PRD 面向开发者 + 禁 Changelog；DEVLOG 长期存档 + 禁流水账。
+- 为每份文档单独列出"允许 / 禁止"条目和写作视角。
+- 同时在 §3.1 DEVLOG 记录时机补充"不要记录流水账"的明文约束。
+- **不另建新的根目录 RULES 文件**：该规则只给 Agent 读，适合放在 `.codebuddy/` 目录下（已被 `.gitignore` 忽略，不影响对外仓库外观）；避免规则双头维护。
+
+**精简 `README.md`**：剔除 9+ 处 `（vX.Y 调整/新增/修正）` 版本标签；合并两条重复的"WeGame 本体管理"条目为一条；使用说明里"腾讯已不再提供稳定直链"这类历史叙述改为中性表述；顶部只保留一条指向 PRD 与 DEVLOG 的链接。
+
+**精简 `PRD.md`**：
+- 顶部元信息改为 `当前版本 + 最后更新` 两行，不再夹带版本号到日期里；新增"文档约束"说明 PRD 只描述当前版本。
+- 清理正文中 15+ 处版本沿革标签（`（v1.4 重要调整）` / `（v1.7 调整）` / `（v1.7 新增）` / `（v1.7.1 新增）` / `（v1.8.1 调整）` / `（v1.8.1 修正）` 等），章节标题一律去掉括号内的 vX.Y。
+- **整段删除** §九「变更记录 (Changelog)」及尾部「v1.1 修复详情」附录——历史现在只在 DEVLOG 里活着。
+- §七「开发流程规则」精简为一段自述（PRD 为需求唯一来源、疑问先确认、不保留版本沿革），另注明其余协作规则在项目内部 Agent 规则文件维护，避免规则双头维护。
+- 文件体积从 42.97 KB → ~35.8 KB。
+
+**精简 `DEVLOG.md`**：把最早 7 条琐碎条目（"核心功能架构"/"技术优化"/"安装向导问题修复"/"密码验证问题修复" + 3 条"需求调整"）折叠成一条 `2026-04-16 ～ 2026-04-17 — 项目初始化与技术栈确立`，只保留真正关键的 Tauri → Electron 架构决策叙事；其他琐碎修正显式交给 `git log`。同时把 v1.3 / v1.3 补强 / v1.4 三条条目的标题补齐版本号标签，与后续 v1.5 ～ v1.8.1 风格一致。顶部新增"编写约束"提示。
+
+### 关键决策
+- **规则沉到已有的 Agent 规则文件而非新建根目录 `RULES.md`**：该规则只给 AI / 开发者读，不是面向终端用户的产品文档。`.codebuddy/rules/devoloper.md` 已由环境自动加载为规则上下文，再新建一份同名文件只会导致规则垂直双头维护。
+- **不升版本号**：本次改动不新增/删除/重命名用户可感知功能、不改默认行为、不改 IPC 接口，属于纯文档治理，不触发 `package.json` 升版本。
+- **不删除已存在的 DEVLOG 历史条目**：只合并早期流水账，保留 v1.2 及以后所有带完整技术决策的条目——因为它们对"半年后还原来龙去脉"确实有帮助。
+- **PRD 尾部保留一小节"附：变更历史"指针**：即使 PRD 不再维护 Changelog，读者在 PRD 末尾仍能一眼看到"变更历史去哪里查"，降低信息断裂感。
+
+### 关键文件
+- 修改：`.codebuddy/rules/devoloper.md`（新增 §0 三份文档定位与边界、§3.1 补写"不写流水账"）、`README.md`（剔除版本沿革标签、合并重复条目）、`PRD.md`（剔除版本沿革标签、删除 §九 Changelog、删除 v1.1 修复详情附录、§七 精简为自述）、`DEVLOG.md`（折叠早期 7 条流水账、统一版本号标签样式、顶部补写作约束）
+
+
 
 
