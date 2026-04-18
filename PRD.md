@@ -6,7 +6,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **最后更新**：2026-04-18（v1.7）
+- **最后更新**：2026-04-18（v1.7.1）
 
 ---
 
@@ -117,6 +117,7 @@
      - 可用 → 直接开始依赖安装
 - 安装过程展示进度条、当前步骤、完成步骤数
 - 安装完成后，向导**自动推进到步骤 5**（如用户已使用「跳过向导」全局跳过则不推进）。
+- **0 依赖分支（v1.7.1 新增）**：若用户在步骤 2 没有勾选任何依赖（v1.7 默认状态），步骤 4 标题显示「准备完成环境配置」，按钮文案切换为「创建环境并继续」；后端路由到 `skip_dependency_installation` 仅做 prefix 初始化，**跳过 winetricks 与 sudo 密码弹窗**，随后依靠相同的 `status: "completed"` 事件推进至步骤 5。
 
 #### 步骤 5：安装 WeGame（v1.7 新增）
 
@@ -572,6 +573,8 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-04-18 | v1.7.1 | 发现 v1.7 的回归：按照 v1.7 默认「全部依赖按需」的策略，步骤 2 默认无勾选 → 步骤 4 的 `canProceed` 要求 `selectedDeps.length > 0` 导致用户永远进不了步骤 5。修复：步骤 4 允许 0 依赖通过（`canProceed` case 4 改为 `true`）；`handleFinish` 将「0 依赖」归入 `skip_dependency_installation` 分支，绕开 sudo 密码弹窗，同时利用后端 `status: "completed"` 事件触发 useEffect 自动推进步骤 5；步骤 4 的标题与按钮文案按 `selectedDeps.length === 0` 做差异化（「准备完成环境配置」/「创建环境并继续」），避免用户误会「会跑 winetricks」 |
+| 2026-04-18 | v1.7 | 向导新增步骤 5「安装 WeGame」：新建 `electron/backend/wegame_installer.ts` （默认从腾讯官方 `dldir1.qq.com` 下载 `WeGameSetup.exe` → 用 Proton 内置 wine64 运行 → 校验 `WeGameLauncher.exe`）、新增 6 个 IPC、单独的 `installerLogger`。依赖策略进一步最小化：`corefonts`/`cjkfonts` 改为默认不勾选（实机日志表明在全新 prefix + 新版 winetricks 下必踩 `c0000135`，而 Proton-GE 已自带 CJK 渲染）。诊断修复：`checkProtonVersion` 在 `config.proton_path` 空/失效时自动回退到 `scanProtonVersions()`。Prefix 兜底：新增 `ensureWinePrefixInitialized`，`syswow64/regedit.exe` 不存在时跳 `wine64 wineboot --init` + `wineserver -w`，install 和 WeGame 安装器流程共用。Launcher 错误横幅检测到「WeGame executable not found」时提供「打开配置向导」直达按钮 |
 | 2026-04-18 | v1.6 | 修复"点击启动 WeGame 没反应"：Launcher / Dashboard 的启动与停止按钮加上 loading 状态、顶部错误横幅（显示 err.message + launcher.log 路径）、启动后 3 秒探测并在进程秒退时给黄色警示。新增 §4.3.1 错误反馈与启动探测规范 |
 | 2026-04-18 | v1.5 | 性能优化：修复"每次进依赖管理页面卡 2~5 秒"问题。根因是 `checkInstalledWinetricks` 用 `execSync` 同步调用 `winetricks list-installed`，阻塞 Electron 主进程 IPC 队列。新增 §4.2.2.3：依赖状态内存缓存 + 后端 `spawn` 异步化 + 前端占位即渲染 + 手动刷新按钮；安装结束/重置 prefix 自动 invalidate |
 | 2026-04-18 | v1.4 | **重大策略调整**：采纳"依赖最小化 + 镜像源兜底 + 诊断模块"三合一方案。理由：1) 实测 WeGame 能启动但安装卡 0%，说明问题不在 Windows 依赖而在网络；2) Proton-GE 已含大部分依赖，重复安装无意义且失败率高；3) .NET 在 Wine 下不稳定，应按需安装。新增 §4.2.2.2 镜像源策略、§4.7 运行诊断模块、§5.5 网络与镜像源；调整 §4.1 步骤 2 与 §4.2.2 依赖分组 |

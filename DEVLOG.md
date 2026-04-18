@@ -207,3 +207,34 @@ v1.6 修好"启动无反应"的 UI 反馈问题后，真正的根因暴露出来
 - 新增：`electron/backend/wegame_installer.ts`
 - 修改：`PRD.md`（向导 4→5 步；Changelog v1.7；依赖分层表；步骤 4 wineboot 说明；新增步骤 5 完整规格 + IPC 表）、`DEVLOG.md`、`electron/backend/dependencies.ts`（M1 + M4）、`electron/backend/diagnostics.ts`（M3）、`electron/backend/logger.ts`（新增 `installerLogger`）、`electron/ipc.ts`（注册 5 个新 IPC）、`src/utils/constants.ts`（M1）、`src/utils/api.ts`（6 个新 API 封装）、`src/pages/SetupWizard.tsx`（步骤 5 全部逻辑）、`src/pages/Launcher.tsx`（错误 banner actions）、`src/App.tsx`（全局事件监听）
 
+## 2026-04-18 — 修复"0 依赖无法进入步骤 5"回归（v1.7.1）
+
+### 背景
+v1.7 把 `corefonts` / `cjkfonts` 改成默认不勾选后，立刻暴露出一条回归：
+- 步骤 2 默认 `selectedDeps` 为空
+- 步骤 4 的 `canProceed` 仍按旧规则 `case 4: return selectedDeps.length > 0`
+- 结果「开始安装」与「下一步」双双被禁用 → 用户**永远走不到步骤 5**，必须倒回去勾一个无用依赖才能推进
+
+### 变更
+- `src/pages/SetupWizard.tsx`：
+  - `canProceed()` 的 `case 4` 改为 `return true`（v1.7 默认就是 0 依赖，这里不该再卡）
+  - `handleFinish()` 把 `selectedDeps.length === 0` 与 `globalSkipped` 合并到同一分支：调用 `skip_dependency_installation`，**不再触发 sudo 密码弹窗**（0 依赖根本用不着 winetricks）。该 IPC 会广播 `status: "completed"` 的 `install-progress` 事件，现有 useEffect 自然地把步骤推进到 5
+  - 步骤 2 底部统计条在 0 依赖时显示"推荐默认：Proton-GE 已自带常用依赖，下一步会跳过 winetricks 阶段" + "无需额外空间"
+  - 步骤 4 的标题 / 副标题 / 按钮文案按 `selectedDeps.length === 0` 差异化：
+    - 标题 "开始安装" → "准备完成环境配置"
+    - 副标题说明仅创建 Wine 环境并直接进入下一步
+    - 按钮 "🚀 开始安装" → "→ 创建环境并继续"（避免用户误以为要跑 winetricks）
+
+### 关键技术决策
+- **复用后端已有的 `skip_dependency_installation`**：不新增 IPC，因为它本就在发完成事件，只是原本只给"点了全局跳过"的用户用。这里只是扩大了它的使用面（"0 依赖" = "没什么要 skip 的，但语义上等价于 skip winetricks 阶段"），零后端改动
+- **不降低步骤 4 可见度**：没有选择让步骤 4 在 0 依赖时自动跳过，因为步骤 4 还承担"保存配置 / 创建 prefix / wineboot --init"三件事，这些对用户来说是**可感知的等待**，需要保留进度条
+- **文案做差异化而非删 UI**：让用户看见按钮变了（"创建环境并继续"而不是"开始安装"），避免用户以为"啥都没做怎么就下一步了"的困惑
+
+### 不做的事
+- 不改 `skip_dependency_installation` 的后端实现（它的名字虽然看起来窄，但事件语义是"依赖阶段结束"，仍然适用）
+- 不在步骤 5 弹出"刚才没装依赖，确认要装 WeGame 吗"二次确认（徒增步骤；WeGame 本身装依赖依赖的是 prefix，不是 winetricks 的那些 verb）
+
+### 关键文件
+- 修改：`src/pages/SetupWizard.tsx`（canProceed / handleFinish / 步骤 2 统计条 / 步骤 4 标题与按钮）
+- 同步：`package.json` v1.7.0 → v1.7.1、`README.md`（版本号 + 步骤 4 描述）、`PRD.md`（版本号 + Changelog 补 v1.7 与 v1.7.1 两行 + 步骤 4 0 依赖分支说明）、`DEVLOG.md`（本条目）
+

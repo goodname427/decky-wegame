@@ -2,7 +2,7 @@
 
 一款运行在 SteamOS / Steam Deck 上的独立桌面应用，用于在 Linux 环境下配置和启动腾讯 WeGame 游戏平台。
 
-> 当前版本：**v1.7**（2026-04-18）· 详见 [PRD.md](./PRD.md) 与 [DEVLOG.md](./DEVLOG.md)
+> 当前版本：**v1.7.1**（2026-04-18）· 详见 [PRD.md](./PRD.md) 与 [DEVLOG.md](./DEVLOG.md)
 
 ## 功能特性
 
@@ -10,7 +10,7 @@
   1. 确认中间层（Wine / winetricks / Proton 的扫描与选择）
   2. 确认依赖（按需勾选：默认全部按需，Proton-GE 已自带 CJK 渲染与 vcrun，避免无意义重装）
   3. 路径选择（Wine Prefix / 下载缓存等路径）
-  4. 执行安装（前置 `wineboot --init` 兜底，避免新 prefix 首装 winetricks 踩 `c0000135`）
+  4. 执行安装（前置 `wineboot --init` 兜底；**0 依赖时自动跳过 winetricks 阶段，直接仅创建 Wine 环境并进入下一步**）
   5. 安装 WeGame（自动下载腾讯官方安装器并在 Wine 里运行，完成后校验 `WeGameLauncher.exe`）
 - **中间层管理** - 扫描 / 切换 / 删除 Proton；下载安装最新 GE-Proton；一键将 winetricks 安装到用户目录（免 sudo）
 - **依赖管理** - 支持复扫、按需安装、失败重试、跳过与缓存清理，自动从国内镜像预拉取以规避境外源失败
@@ -83,7 +83,7 @@ pnpm electron:dev # 启动 Electron 主进程（开发模式）
 2. **步骤 1** 确认中间层：扫描并选择 Wine / winetricks / Proton（缺少 GE-Proton 时可一键下载）
 3. **步骤 2** 确认依赖：默认**完全按需**，仅在 WeGame 日后报错时再回来勾选对应依赖
 4. **步骤 3** 路径选择：自定义 Wine Prefix 与缓存路径（一般保持默认即可）
-5. **步骤 4** 执行安装：点击「开始安装」后自动创建 prefix、执行 `wineboot --init`、安装所选依赖
+5. **步骤 4** 执行安装：点击「开始安装」后自动创建 prefix、执行 `wineboot --init`、安装所选依赖；**未勾选任何依赖也可直接进入下一步，按钮会自动切换为「创建环境并继续」**
 6. **步骤 5** 安装 WeGame：点击「下载并安装 WeGame」，应用会自动下载腾讯官方安装器（`dldir1.qq.com/WeGame/Setup/WeGameSetup.exe`）并在 Wine 内运行图形化安装向导
 7. 完成向导后进入「启动器」→「启动 WeGame」，同时可扫描 WeGame 已安装的游戏，挑选后添加到 Steam 库
 

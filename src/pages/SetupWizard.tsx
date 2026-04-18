@@ -245,9 +245,14 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       await saveEnvironment(localConfig!);
       // Init prefix first
       await invoke("init_environment", { config: localConfig });
-      // Install dependencies or skip
-      if (globalSkipped) {
-        // Skip entire wizard
+      // Decide the right path to take based on what the user picked:
+      //   - globalSkipped    → user chose the big "skip wizard" button; use skip IPC
+      //   - 0 selected deps  → PRD v1.7 recommended default; still invoke the skip
+      //     IPC because (a) nothing needs winetricks, so we must NOT prompt for
+      //     sudo, and (b) the skip IPC emits status="completed", which is what
+      //     step 5's auto-advance useEffect listens for.
+      //   - >0 selected deps → normal install path
+      if (globalSkipped || selectedDeps.length === 0) {
         await invoke("skip_dependency_installation", { config: localConfig });
       } else {
         // Check if we need sudo permissions for winetricks
@@ -354,7 +359,13 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       }
       case 2: return true; // Proton auto-selects if none chosen
       case 3: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
-      case 4: return selectedDeps.length > 0;
+      // PRD v1.7: with all fonts flipped to opt-in, it's perfectly valid to
+      // arrive at step 4 with zero dependencies selected — that's actually
+      // the recommended default. Do NOT gate "next step / start install" on
+      // selectedDeps.length here; the 0-deps case is handled in handleFinish()
+      // by routing through skip_dependency_installation so step 5 still
+      // receives the expected progress.status==="completed" event.
+      case 4: return true;
       case 5: return true; // always allowed — WeGame install step is optional
       default: return true;
     }
@@ -790,9 +801,16 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
             })}
 
             <div className="flex items-center justify-between rounded-lg bg-primary/5 border border-primary/10 px-4 py-3">
-              <span className="text-sm text-gray-300">已选择 <strong className="text-primary">{selectedDeps.length}</strong> 个依赖项</span>
+              <span className="text-sm text-gray-300">
+                已选择 <strong className="text-primary">{selectedDeps.length}</strong> 个依赖项
+                {selectedDeps.length === 0 && (
+                  <span className="ml-2 text-xs text-gray-500">（推荐默认：Proton-GE 已自带常用依赖，下一步会跳过 winetricks 阶段）</span>
+                )}
+              </span>
               <span className="text-xs text-gray-500">
-                预计占用 ~{(selectedDeps.length * 45).toFixed(0)} MB
+                {selectedDeps.length === 0
+                  ? "无需额外空间"
+                  : `预计占用 ~${(selectedDeps.length * 45).toFixed(0)} MB`}
               </span>
             </div>
           </div>
@@ -801,8 +819,14 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         {currentStep === 4 && (
           <div className="space-y-5">
             <div className="text-center">
-              <h3 className="text-lg font-semibold text-gray-100">开始安装</h3>
-              <p className="mt-1 text-sm text-gray-400">点击下方按钮开始创建环境和安装依赖组件。</p>
+              <h3 className="text-lg font-semibold text-gray-100">
+                {selectedDeps.length === 0 ? "准备完成环境配置" : "开始安装"}
+              </h3>
+              <p className="mt-1 text-sm text-gray-400">
+                {selectedDeps.length === 0
+                  ? "您没有勾选额外依赖（推荐默认），点击下方按钮会仅创建 Wine 环境，随后直接进入下一步「安装 WeGame」。"
+                  : "点击下方按钮开始创建环境和安装依赖组件。"}
+              </p>
             </div>
 
             {!installing && progress.status !== "completed" && progress.status !== "running" && (
@@ -812,8 +836,17 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                   disabled={!canProceed()}
                   className="neon-primary text-base px-10 py-3.5 flex items-center gap-2"
                 >
-                  <RocketIcon />
-                  开始安装
+                  {selectedDeps.length === 0 ? (
+                    <>
+                      <ChevronRight className="h-4 w-4" />
+                      创建环境并继续
+                    </>
+                  ) : (
+                    <>
+                      <RocketIcon />
+                      开始安装
+                    </>
+                  )}
                 </button>
               </div>
             )}
