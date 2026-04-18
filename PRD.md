@@ -6,7 +6,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **最后更新**：2026-04-18（v1.7.1）
+- **最后更新**：2026-04-18（v1.8.0）
 
 ---
 
@@ -344,6 +344,35 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 - 放在依赖管理页签底部"危险操作区"
 - 功能与原先一致，需 `ConfirmDialog` 二次确认
 
+#### 4.2.6 配置一致性（v1.8 新增）
+
+**背景**：v1.7 之前「安装向导」与「依赖管理页」各自实现了一份"路径编辑 / Proton 选择 / WeGame 安装"UI，长期下来出现了**能力/行为割裂**——例如向导里没有"下载最新 GE-Proton"按钮、没有"winetricks 一键到 ~/.local/bin"按钮、Step 3 的字段 label 与实际字段不符（`wegame_install_path` 被错误地标为"依赖缓存路径"）。
+
+**约束**：两者本质上是**同一套配置**的两种呈现（首次引导 vs. 日常维护），必须保证**功能对等、行为一致**。
+
+**实现方式**：抽出 `src/components/config/` 下 3 个共享组件，统一作为「唯一事实来源」；SetupWizard 与 Dependencies 页面以 `variant` 属性选择呈现形态。
+
+| 组件 | 职责 | `variant` 值 | 前端事件/IPC |
+|---|---|---|---|
+| `<PathsSection>` | 编辑 `wine_prefix_path` + `wegame_install_path` | `wizard` / `panel` | `save_config_cmd`（变量后防抖保存；wizard 模式通过 `onLocalChange` 回传暂存） |
+| `<ProtonPicker>` | 列出 Proton / 切换 / 下载 GE-Proton / 删除用户持有版本 | `wizard` / `panel` | `get_proton_versions` / `download_ge_proton` / `delete_proton_version` + `middleware-download-progress` 事件 |
+| `<WeGameInstaller>` | 检测 / 下载 / 运行 / 重装 WeGame，支持状态回传 | `wizard` / `manage` | `check_wegame_installed` / `install_wegame` / `clear_wegame_installer_cache` + `wegame-install-progress` 事件 + `onStatusChange` 回调 |
+
+**向导侧补齐能力**：
+- Step 1 Proton 区块：用 `<ProtonPicker variant="wizard">`，附带"下载最新 GE-Proton"按钮（**向导中也可一键获取**，不再需要跳回依赖管理页）
+- Step 1 winetricks 缺失 → 选"下载安装"分支时，追加"立即下载到 `~/.local/bin`（无需密码）"按钮，成功后自动重新扫描
+- Step 3 路径字段：统一由 `<PathsSection variant="wizard">` 提供（同时修正原 label 错位 bug）
+- Step 5 WeGame 安装：整块替换为 `<WeGameInstaller variant="wizard">`；向导只保留 `wegameInstalled` 一个轻量状态用于"完成 / 稍后安装并完成"按钮文案判断，进度/重试/错误处理一律由共享组件负责
+
+**依赖管理页侧补齐能力**：
+- 顶部工具栏保留不变
+- 新增 `<WeGameInstaller variant="manage">` 卡片：展示 WeGame 安装状态，支持「下载并安装」/「重新安装（清缓存）」/「重试」
+- 依赖项 hover 时多出"重装"迷你按钮：调用 `start_install_dependencies` 并传 `selectedIds: [dep.id]`，支持单项重装而不必"全部重装"
+
+**约束（写入 §5 禁止事项）**：
+- 任何关于 Wine Prefix / WeGame 安装路径 / Proton 选择 / WeGame 本体安装的 UI，**必须**通过 `src/components/config/` 下的共享组件实现，**禁止**在向导或管理页中复制粘贴一份重复实现
+- 新增可配置字段时，先在共享组件中加入；两个入口点自动同步，无需手工双写
+
 ---
 
 ### 4.3 启动器（Launcher 页面）
@@ -573,6 +602,7 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-04-18 | v1.8.0 | **配置一致性重构**：消除「安装向导」与「依赖管理页」之间的能力/行为割裂。新增 `src/components/config/` 下 3 个共享组件，均支持 `variant="wizard"` 与 `variant="panel"/"manage"` 两种形态：`PathsSection`（Wine Prefix + WeGame 路径）、`ProtonPicker`（Proton 选择/下载 GE-Proton/删除用户持有版本）、`WeGameInstaller`（安装/重装/清缓存）。向导侧的 Step 1 新增「下载最新 GE-Proton」与「winetricks 一键安装到 ~/.local/bin（无需密码）」两个之前只在依赖管理页才有的能力；依赖管理页新增 `<WeGameInstaller variant="manage">` 与单项依赖 hover 来的「重装」按钮，不再需要重走向导。修复 Step 3 原来「依赖缓存路径」标签与 `wegame_install_path` 字段不符的错位 bug。变更后：`SetupWizard.tsx` 1155 → 864 行，`Dependencies.tsx` 802 → 609 行，净减重复 UI 代码 ≈540 行 |
 | 2026-04-18 | v1.7.1 | 发现 v1.7 的回归：按照 v1.7 默认「全部依赖按需」的策略，步骤 2 默认无勾选 → 步骤 4 的 `canProceed` 要求 `selectedDeps.length > 0` 导致用户永远进不了步骤 5。修复：步骤 4 允许 0 依赖通过（`canProceed` case 4 改为 `true`）；`handleFinish` 将「0 依赖」归入 `skip_dependency_installation` 分支，绕开 sudo 密码弹窗，同时利用后端 `status: "completed"` 事件触发 useEffect 自动推进步骤 5；步骤 4 的标题与按钮文案按 `selectedDeps.length === 0` 做差异化（「准备完成环境配置」/「创建环境并继续」），避免用户误会「会跑 winetricks」 |
 | 2026-04-18 | v1.7 | 向导新增步骤 5「安装 WeGame」：新建 `electron/backend/wegame_installer.ts` （默认从腾讯官方 `dldir1.qq.com` 下载 `WeGameSetup.exe` → 用 Proton 内置 wine64 运行 → 校验 `WeGameLauncher.exe`）、新增 6 个 IPC、单独的 `installerLogger`。依赖策略进一步最小化：`corefonts`/`cjkfonts` 改为默认不勾选（实机日志表明在全新 prefix + 新版 winetricks 下必踩 `c0000135`，而 Proton-GE 已自带 CJK 渲染）。诊断修复：`checkProtonVersion` 在 `config.proton_path` 空/失效时自动回退到 `scanProtonVersions()`。Prefix 兜底：新增 `ensureWinePrefixInitialized`，`syswow64/regedit.exe` 不存在时跳 `wine64 wineboot --init` + `wineserver -w`，install 和 WeGame 安装器流程共用。Launcher 错误横幅检测到「WeGame executable not found」时提供「打开配置向导」直达按钮 |
 | 2026-04-18 | v1.6 | 修复"点击启动 WeGame 没反应"：Launcher / Dashboard 的启动与停止按钮加上 loading 状态、顶部错误横幅（显示 err.message + launcher.log 路径）、启动后 3 秒探测并在进程秒退时给黄色警示。新增 §4.3.1 错误反馈与启动探测规范 |

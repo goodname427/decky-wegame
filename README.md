@@ -2,7 +2,7 @@
 
 一款运行在 SteamOS / Steam Deck 上的独立桌面应用，用于在 Linux 环境下配置和启动腾讯 WeGame 游戏平台。
 
-> 当前版本：**v1.7.1**（2026-04-18）· 详见 [PRD.md](./PRD.md) 与 [DEVLOG.md](./DEVLOG.md)
+> 当前版本：**v1.8.0**（2026-04-18）· 详见 [PRD.md](./PRD.md) 与 [DEVLOG.md](./DEVLOG.md)
 
 ## 功能特性
 
@@ -12,8 +12,10 @@
   3. 路径选择（Wine Prefix / 下载缓存等路径）
   4. 执行安装（前置 `wineboot --init` 兜底；**0 依赖时自动跳过 winetricks 阶段，直接仅创建 Wine 环境并进入下一步**）
   5. 安装 WeGame（自动下载腾讯官方安装器并在 Wine 里运行，完成后校验 `WeGameLauncher.exe`）
+- **配置一致性（v1.8 重构）** - 「安装向导」与「依赖管理页」共享同一套配置组件（`PathsSection` / `ProtonPicker` / `WeGameInstaller`），向导中的 GE-Proton 下载、winetricks 一键安装、WeGame 安装/重装与依赖管理页**能力对等**、**行为一致**，不再出现「向导有、管理页没有」或反之的割裂
 - **中间层管理** - 扫描 / 切换 / 删除 Proton；下载安装最新 GE-Proton；一键将 winetricks 安装到用户目录（免 sudo）
-- **依赖管理** - 支持复扫、按需安装、失败重试、跳过与缓存清理，自动从国内镜像预拉取以规避境外源失败
+- **WeGame 本体管理** - 依赖管理页新增 WeGame 安装状态卡片，支持直接「下载并安装」或「清缓存并重新安装」，无需重新进入向导
+- **依赖管理** - 支持复扫、按需安装、**单项重装**（hover 即可触发）、失败重试、跳过与缓存清理，自动从国内镜像预拉取以规避境外源失败
 - **诊断面板** - 一键跑完 Proton 版本 / 网络 / DNS / TLS / Wine 状态等检查，失败项给出可执行建议
 - **启动器** - 一键启动 / 停止 WeGame；启动失败时给出红色错误横幅，若错误是「未安装 WeGame」会直接给出「打开配置向导」的直达按钮
 - **游戏库管理** - 扫描 WeGame 已安装游戏，支持添加到 Steam 库
@@ -80,12 +82,14 @@ pnpm electron:dev # 启动 Electron 主进程（开发模式）
 ## 使用说明
 
 1. 首次打开应用会自动弹出「环境设置」向导（5 步）
-2. **步骤 1** 确认中间层：扫描并选择 Wine / winetricks / Proton（缺少 GE-Proton 时可一键下载）
+2. **步骤 1** 确认中间层：扫描并选择 Wine / winetricks / Proton；**缺少 GE-Proton 可在向导内直接点「下载最新 GE-Proton」**，**缺 winetricks 也可直接「立即下载到 ~/.local/bin（无需密码）」**（与依赖管理页对等）
 3. **步骤 2** 确认依赖：默认**完全按需**，仅在 WeGame 日后报错时再回来勾选对应依赖
-4. **步骤 3** 路径选择：自定义 Wine Prefix 与缓存路径（一般保持默认即可）
+4. **步骤 3** 路径选择：自定义 Wine Prefix 与 WeGame 安装路径（一般保持默认即可；如修改 Wine 前缀会弹确认框提示不自动迁移）
 5. **步骤 4** 执行安装：点击「开始安装」后自动创建 prefix、执行 `wineboot --init`、安装所选依赖；**未勾选任何依赖也可直接进入下一步，按钮会自动切换为「创建环境并继续」**
 6. **步骤 5** 安装 WeGame：点击「下载并安装 WeGame」，应用会自动下载腾讯官方安装器（`dldir1.qq.com/WeGame/Setup/WeGameSetup.exe`）并在 Wine 内运行图形化安装向导
 7. 完成向导后进入「启动器」→「启动 WeGame」，同时可扫描 WeGame 已安装的游戏，挑选后添加到 Steam 库
+
+向导完成后如需重新调整任何配置，**不必重走向导**：在「依赖管理」页顶部即可直接修改 Wine Prefix / WeGame 安装路径、切换 Proton、重装 winetricks、甚至「清缓存并重新安装 WeGame」，**所有动作与向导一一对应**。
 
 如果启动失败，页面顶部会出现红色错误横幅，并给出 `~/.local/share/decky-wegame/logs/launcher.log` 日志路径；若错误是「未安装 WeGame」，可直接点击横幅里的「打开配置向导」按钮跳回第 5 步继续安装。
 

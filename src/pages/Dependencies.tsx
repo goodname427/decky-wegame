@@ -21,6 +21,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import PathsSection from "../components/config/PathsSection";
 import ProtonPicker from "../components/config/ProtonPicker";
+import WeGameInstaller from "../components/config/WeGameInstaller";
 import { useEnvironment } from "../hooks/useEnvironment";
 import { useInstallProgress } from "../hooks/useInstallProgress";
 import { DEPENDENCY_LIST } from "../utils/constants";
@@ -179,6 +180,9 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
       {/* Custom paths (Wine prefix + WeGame install dir) */}
       <PathsSection config={config} saveEnvironment={saveEnvironment} variant="panel" />
 
+      {/* WeGame itself (install / reinstall) — PRD v1.8 §4.2.2 */}
+      <WeGameInstaller config={config} variant="manage" />
+
       {/* Winetricks dependencies */}
       <div className="glass-card p-5 space-y-3">
         <div className="flex items-center justify-between">
@@ -263,6 +267,22 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
                       <p className="mt-0.5 truncate text-xs text-gray-500">{dep.description}</p>
                     </div>
                     <span className="shrink-0 tabular-nums text-xs text-gray-600">{dep.size_mb.toFixed(0)} MB</span>
+                    {/* PRD v1.8: single-item reinstall. Visible only on hover
+                        for installed deps so it doesn't clutter the list. */}
+                    {dep.installed && progress.status !== "running" && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await invoke("start_install_dependencies", { selectedIds: [dep.id], config });
+                          } catch (err) { console.error("Single-item reinstall error:", err); }
+                        }}
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity rounded bg-white/5 hover:bg-white/10 px-2 py-1 text-[10px] text-gray-400 hover:text-gray-200 flex items-center gap-1"
+                        title={`重装 ${dep.name}`}
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        重装
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
