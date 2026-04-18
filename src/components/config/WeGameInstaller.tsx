@@ -36,6 +36,10 @@ interface WeGameInstallerProps {
   /** Optional callback fired when install finishes successfully (so wizard
    *  can auto-advance / close). */
   onInstalled?: () => void;
+  /** Optional: report installed-state changes back to parent. Fires on
+   *  initial check and after every install/reinstall. Use this to drive
+   *  wizard navigation (e.g. "Finish" vs "Install later" button copy). */
+  onStatusChange?: (state: { installed: boolean | null; exePath: string | null }) => void;
 }
 
 /**
@@ -49,6 +53,7 @@ export default function WeGameInstaller({
   config,
   variant = "manage",
   onInstalled,
+  onStatusChange,
 }: WeGameInstallerProps) {
   const [installed, setInstalled] = useState<boolean | null>(null);
   const [exePath, setExePath] = useState<string | null>(null);
@@ -80,10 +85,12 @@ export default function WeGameInstaller({
       const r = (await checkWegameInstalled(config)) as { installed: boolean; exePath?: string };
       setInstalled(r.installed);
       setExePath(r.exePath ?? null);
+      onStatusChange?.({ installed: r.installed, exePath: r.exePath ?? null });
     } catch {
       setInstalled(false);
+      onStatusChange?.({ installed: false, exePath: null });
     }
-  }, [config]);
+  }, [config, onStatusChange]);
 
   // Initial status check
   useEffect(() => {
@@ -111,6 +118,7 @@ export default function WeGameInstaller({
         setPhase("done");
         setPercent(100);
         setMessage(res.exePath ? `WeGame 已安装到：${res.exePath}` : "WeGame 已安装");
+        onStatusChange?.({ installed: true, exePath: res.exePath ?? null });
         onInstalled?.();
       } else {
         setError(res.error || "安装失败");
