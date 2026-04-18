@@ -123,3 +123,24 @@
   - 保留 sync `getDependencyList` 导出，避免破坏潜在的其他调用点
 - **验收标准**：首次冷启动 <200ms 可交互（占位先显示），之后进入 <50ms（缓存命中，几乎瞬时显示正确状态）；任何时刻其他 IPC 调用不会被依赖查询阻塞
 - **关键文件**：`PRD.md`（新增 §4.2.2.3；Changelog v1.5）、`DEVLOG.md`、`electron/backend/dependencies.ts`、`electron/ipc.ts`、`src/utils/api.ts`、`src/pages/Dependencies.tsx`
+
+## 2026-04-18 — 修复"点击启动 WeGame 没反应"（v1.6）
+- **问题现象**：用户在 Launcher 页点「启动 WeGame」后界面无任何反馈，也找不到 launcher.log；Dashboard 的相同按钮同样静默
+- **根因**：
+  1. `handleLaunchWeGame` 只在错误分支 `console.error`，没有 UI 反馈，用户完全看不到 IPC 抛错的信息
+  2. 启动成功时是 `detached` 进程，若秒退（prefix 损坏 / 依赖缺失 / Proton 不兼容）也没提示
+  3. 启动前没有 loading 态，用户会连点，且无从判断是不是点中了
+  4. 用户不知道日志文件路径，即使想排查也找不到入口
+- **修复策略（PRD v1.6 §4.3.1）**：
+  1. **即时 loading**：启动/停止按钮按下立即进入 `disabled + Loader2 animate-spin + "启动中…/停止中…"` 态
+  2. **错误红色横幅**：捕获 IPC 异常，把 `err.message` 完整文本放在页面顶部红色 banner，附 `~/.local/share/decky-wegame/logs/launcher.log` 路径提示
+  3. **3 秒探测**：启动成功返回后等 3 秒，重新 `invoke("get_wegame_status_cmd")`；若进程已不在 → 黄色警示 banner，提示可能是 prefix/依赖/Proton 原因，并指向 launcher.log 里的 `[stderr]` 与 `exited with code` 关键词
+  4. **可关闭**：banner 右上角 × 按钮，用户也可被新 banner 覆盖
+  5. Dashboard 页面的启动/停止快捷入口同步改造
+- **关键技术决策**：
+  - 探测间隔选 3 秒而不是 1 秒：Proton 冷启动 + wine prefix 初次加载需要 2~3 秒，过短会误判为"秒退"
+  - 探测阶段用 IPC 直接查 `get_wegame_status_cmd` 拿新值，而不是依赖闭包里的 `status`（避免 stale state）
+  - Banner 类型分 `error`（红）/`warning`（黄），语义清晰：一个是没起来，一个是起来但没活下来
+  - Error banner 保留直到下次成功操作或用户手动关闭，不自动消失 → 用户有时间复制错误信息
+- **不做的事**：暂不做 toast 库依赖；暂不在后端加心跳探测（3 秒足够覆盖 95% 场景）
+- **关键文件**：`PRD.md`（新增 §4.3.1；Changelog v1.6）、`DEVLOG.md`、`src/pages/Launcher.tsx`、`src/pages/Dashboard.tsx`

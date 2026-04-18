@@ -6,7 +6,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **最后更新**：2026-04-18（v1.5）
+- **最后更新**：2026-04-18（v1.6）
 
 ---
 
@@ -299,6 +299,30 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 - 扫描已安装的游戏
 - 支持将游戏添加到 Steam 库
 
+#### 4.3.1 错误反馈与启动探测（v1.6 新增）
+
+背景：先前"启动 WeGame"失败时前端只 `console.error`，用户看到的是"点了没反应"，且无法判断日志位置。必须让所有异步操作在界面上给出明确反馈。
+
+- **启动中状态**
+  - 点击"启动 WeGame"后，按钮立即进入 `disabled + loading` 状态（旋转图标 + "启动中…"文案），避免用户连点
+  - 按钮禁用直到后端 IPC 返回或超时
+- **即时错误反馈**
+  - IPC 抛出的任何错误（如 `No Proton version found` / `WeGame executable not found` / spawn 失败）必须以**页面顶部红色横幅**（dismissable）形式展示 `err.message` 全文
+  - 横幅下方附一行灰色小字："详细日志：`~/.local/share/decky-wegame/logs/launcher.log`"
+  - 横幅保留直到用户关闭或下一次成功操作
+- **启动后探测**
+  - 启动命令返回后，等待 3 秒再 `refetch` WeGame 状态
+  - 若此时 `status.running === false`（进程秒退），展示**黄色警示横幅**："WeGame 进程已启动但随即退出，可能是 prefix 损坏或依赖缺失。查看 `launcher.log` 中 `[stderr]` 与 `exited with code` 附近内容定位原因"
+  - 若 `status.running === true`，清除任何现存横幅
+- **停止按钮**
+  - 同样需要 loading 状态 + 错误横幅
+- **复用范围**
+  - Dashboard 页面上的"启动 WeGame"快捷入口必须遵循相同反馈规范
+
+**验收标准**：
+- 随便点一次启动按钮，都能在 3 秒内看到"成功"或"明确错误原因"之一，绝不允许出现"点了没反应"的体验
+- 错误文案直接可指导下一步操作（定位日志 / 检查 Proton / 检查 WeGame 路径）
+
 ---
 
 ### 4.4 设置（Settings 页面）
@@ -495,6 +519,7 @@ winetricks 默认从微软/Google/Web Archive 等境外源下载依赖包，在 
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-04-18 | v1.6 | 修复"点击启动 WeGame 没反应"：Launcher / Dashboard 的启动与停止按钮加上 loading 状态、顶部错误横幅（显示 err.message + launcher.log 路径）、启动后 3 秒探测并在进程秒退时给黄色警示。新增 §4.3.1 错误反馈与启动探测规范 |
 | 2026-04-18 | v1.5 | 性能优化：修复"每次进依赖管理页面卡 2~5 秒"问题。根因是 `checkInstalledWinetricks` 用 `execSync` 同步调用 `winetricks list-installed`，阻塞 Electron 主进程 IPC 队列。新增 §4.2.2.3：依赖状态内存缓存 + 后端 `spawn` 异步化 + 前端占位即渲染 + 手动刷新按钮；安装结束/重置 prefix 自动 invalidate |
 | 2026-04-18 | v1.4 | **重大策略调整**：采纳"依赖最小化 + 镜像源兜底 + 诊断模块"三合一方案。理由：1) 实测 WeGame 能启动但安装卡 0%，说明问题不在 Windows 依赖而在网络；2) Proton-GE 已含大部分依赖，重复安装无意义且失败率高；3) .NET 在 Wine 下不稳定，应按需安装。新增 §4.2.2.2 镜像源策略、§4.7 运行诊断模块、§5.5 网络与镜像源；调整 §4.1 步骤 2 与 §4.2.2 依赖分组 |
 | 2026-04-18 | v1.3 | 修复依赖安装失败（`wineserver not found`）：明确依赖安装必须使用所选 Proton 内置的 wine/wineserver，补充 §4.2.2.1；无可用 Wine 后端时立即终止并上报清晰错误 |

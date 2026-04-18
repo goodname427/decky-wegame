@@ -12,11 +12,25 @@ import {
   Layers,
   Plus,
   RefreshCw,
+  AlertCircle,
+  AlertTriangle,
+  X,
 } from "lucide-react";
 import StatusCard from "../components/StatusCard";
 import ConfirmDialog from "../components/ConfirmDialog";
 import useWegameStatus from "../hooks/useWegameStatus";
 import useEnvironment from "../hooks/useEnvironment";
+
+// PRD v1.6 §4.3.1: keep the hint text in sync with Launcher.tsx.
+const LAUNCHER_LOG_HINT = "详细日志：~/.local/share/decky-wegame/logs/launcher.log";
+
+type BannerKind = "error" | "warning";
+interface Banner {
+  kind: BannerKind;
+  title: string;
+  detail?: string;
+  hint?: string;
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -25,7 +39,9 @@ export default function Dashboard() {
 
   const [initing, setIniting] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [banner, setBanner] = useState<Banner | null>(null);
 
   // Prefix info
   const prefixExists = systemInfo !== null; // Simplified - would check real state
@@ -53,27 +69,109 @@ export default function Dashboard() {
   }
 
   async function handleLaunch() {
+    // PRD v1.6 §4.3.1: banner + probing (same behavior as Launcher page).
     setLaunching(true);
+    setBanner(null);
     try {
       await invoke("launch_wegame_cmd", { config });
-      refetchStatus();
+      setTimeout(async () => {
+        await refetchStatus();
+        try {
+          const fresh: { running: boolean } = await invoke("get_wegame_status_cmd");
+          if (!fresh.running) {
+            setBanner({
+              kind: "warning",
+              title: "WeGame 启动后随即退出",
+              detail:
+                "进程已被拉起但几秒内就退出，常见原因：prefix 损坏 / 依赖缺失 / Proton 版本不兼容。",
+              hint: LAUNCHER_LOG_HINT + " （关注 [stderr] 与 “exited with code” 附近的行）",
+            });
+          }
+        } catch {
+          /* ignore */
+        } finally {
+          setLaunching(false);
+        }
+      }, 3000);
     } catch (err) {
+      setLaunching(false);
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("Launch failed:", err);
+      setBanner({
+        kind: "error",
+        title: "启动 WeGame 失败",
+        detail: msg,
+        hint: LAUNCHER_LOG_HINT,
+      });
     }
-    setLaunching(false);
   }
 
   async function handleStop() {
+    setStopping(true);
     try {
       await invoke("stop_wegame_cmd");
-      refetchStatus();
+      setTimeout(async () => {
+        await refetchStatus();
+        setStopping(false);
+      }, 1000);
     } catch (err) {
+      setStopping(false);
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("Stop failed:", err);
+      setBanner({
+        kind: "error",
+        title: "停止 WeGame 失败",
+        detail: msg,
+        hint: LAUNCHER_LOG_HINT,
+      });
     }
   }
 
   return (
     <div className="space-y-6">
+      {/* PRD v1.6 §4.3.1: actionable error / warning banner. */}
+      {banner && (
+        <div
+          className={
+            "flex items-start gap-3 rounded-lg border p-4 " +
+            (banner.kind === "error"
+              ? "border-red-500/40 bg-red-500/10"
+              : "border-amber-500/40 bg-amber-500/10")
+          }
+        >
+          {banner.kind === "error" ? (
+            <AlertCircle className="h-5 w-5 shrink-0 text-red-400 mt-0.5" />
+          ) : (
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
+          )}
+          <div className="flex-1 min-w-0">
+            <div
+              className={
+                "text-sm font-semibold " +
+                (banner.kind === "error" ? "text-red-200" : "text-amber-200")
+              }
+            >
+              {banner.title}
+            </div>
+            {banner.detail && (
+              <div className="mt-1 text-xs text-gray-300 break-all whitespace-pre-wrap">
+                {banner.detail}
+              </div>
+            )}
+            {banner.hint && (
+              <div className="mt-1.5 text-[11px] text-gray-500 break-all">{banner.hint}</div>
+            )}
+          </div>
+          <button
+            onClick={() => setBanner(null)}
+            className="shrink-0 text-gray-400 hover:text-gray-200 transition-colors"
+            title="关闭提示"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Global Status Banner */}
       <div className="glass-card overflow-hidden">
         <div className={`flex items-center gap-4 p-5 ${
@@ -115,9 +213,13 @@ export default function Dashboard() {
           </button>
         )}
         {wegameStatus.running && (
-          <button onClick={handleStop} className="neon-danger flex items-center justify-center gap-2 py-3 text-sm">
+          <button
+            onClick={handleStop}
+            disabled={stopping}
+            className="neon-danger flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-60 disabled:cursor-wait"
+          >
             <Square className="h-4 w-4" />
-            停止进程
+            {stopping ? "停止中..." : "停止进程"}
           </button>
         )}
         <button onClick={() => navigate("/settings")} className="neon-secondary flex items-center justify-center gap-2 py-3 text-sm">

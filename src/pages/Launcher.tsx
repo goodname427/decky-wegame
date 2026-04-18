@@ -8,10 +8,26 @@ import {
   Gamepad2,
   FolderOpen,
   Search,
+  AlertCircle,
+  AlertTriangle,
+  Loader2,
+  X,
 } from "lucide-react";
 import useWegameStatus from "../hooks/useWegameStatus";
 import useEnvironment from "../hooks/useEnvironment";
 import type { GameEntry } from "../types";
+
+// PRD v1.6 §4.3.1: launcher.log path hint shown in error banners so users
+// know exactly where to look when a launch fails.
+const LAUNCHER_LOG_HINT = "详细日志：~/.local/share/decky-wegame/logs/launcher.log";
+
+type BannerKind = "error" | "warning";
+interface Banner {
+  kind: BannerKind;
+  title: string;
+  detail?: string;
+  hint?: string;
+}
 
 export default function Launcher() {
   const { status, refetch } = useWegameStatus();
@@ -20,6 +36,9 @@ export default function Launcher() {
   const [loading, setLoading] = useState(true);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [stopBusy, setStopBusy] = useState(false);
+  const [banner, setBanner] = useState<Banner | null>(null);
 
   useEffect(() => {
     loadGames();
@@ -37,20 +56,68 @@ export default function Launcher() {
   }
 
   async function handleLaunchWeGame() {
+    // PRD v1.6 §4.3.1: immediate UI feedback + post-launch probing.
+    setLaunchBusy(true);
+    setBanner(null);
     try {
       await invoke("launch_wegame_cmd", { config });
-      setTimeout(refetch, 1000);
+      // Give WeGame a chance to spin up (proton cold start + wine prefix
+      // init can take ~2s), then check whether the process is still alive.
+      setTimeout(async () => {
+        await refetch();
+        // We can't read `status` here directly (stale closure); re-query.
+        try {
+          const fresh: { running: boolean } = await invoke("get_wegame_status_cmd");
+          if (!fresh.running) {
+            setBanner({
+              kind: "warning",
+              title: "WeGame 启动后随即退出",
+              detail:
+                "进程已被拉起但几秒内就退出，常见原因：prefix 损坏 / 依赖缺失 / Proton 版本不兼容。",
+              hint:
+                LAUNCHER_LOG_HINT +
+                " （关注 [stderr] 与 “exited with code” 附近的行）",
+            });
+          } else {
+            setBanner(null);
+          }
+        } catch {
+          /* ignore status probe error */
+        } finally {
+          setLaunchBusy(false);
+        }
+      }, 3000);
     } catch (err) {
+      setLaunchBusy(false);
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("Launch error:", err);
+      setBanner({
+        kind: "error",
+        title: "启动 WeGame 失败",
+        detail: msg,
+        hint: LAUNCHER_LOG_HINT,
+      });
     }
   }
 
   async function handleStopWeGame() {
+    setStopBusy(true);
     try {
       await invoke("stop_wegame_cmd");
-      setTimeout(refetch, 1000);
+      setTimeout(async () => {
+        await refetch();
+        setStopBusy(false);
+      }, 1000);
     } catch (err) {
+      setStopBusy(false);
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("Stop error:", err);
+      setBanner({
+        kind: "error",
+        title: "停止 WeGame 失败",
+        detail: msg,
+        hint: LAUNCHER_LOG_HINT,
+      });
     }
   }
 
@@ -76,6 +143,51 @@ export default function Launcher() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
+      {/* PRD v1.6 §4.3.1: error / warning banner with actionable hint. */}
+      {banner && (
+        <div
+          className={
+            "flex items-start gap-3 rounded-lg border p-4 " +
+            (banner.kind === "error"
+              ? "border-red-500/40 bg-red-500/10"
+              : "border-amber-500/40 bg-amber-500/10")
+          }
+        >
+          {banner.kind === "error" ? (
+            <AlertCircle className="h-5 w-5 shrink-0 text-red-400 mt-0.5" />
+          ) : (
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
+          )}
+          <div className="flex-1 min-w-0">
+            <div
+              className={
+                "text-sm font-semibold " +
+                (banner.kind === "error" ? "text-red-200" : "text-amber-200")
+              }
+            >
+              {banner.title}
+            </div>
+            {banner.detail && (
+              <div className="mt-1 text-xs text-gray-300 break-all whitespace-pre-wrap">
+                {banner.detail}
+              </div>
+            )}
+            {banner.hint && (
+              <div className="mt-1.5 text-[11px] text-gray-500 break-all">
+                {banner.hint}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setBanner(null)}
+            className="shrink-0 text-gray-400 hover:text-gray-200 transition-colors"
+            title="关闭提示"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* WeGame Control Panel */}
       <div className="glass-card overflow-hidden">
         <div className={`flex items-center gap-4 p-5 ${
@@ -95,14 +207,40 @@ export default function Launcher() {
 
           <div className="flex gap-2 shrink-0">
             {!status.running ? (
-              <button onClick={handleLaunchWeGame} className="neon-primary flex items-center gap-2 text-sm px-5 py-2.5">
-                <Rocket className="h-4 w-4" />
-                启动 WeGame
+              <button
+                onClick={handleLaunchWeGame}
+                disabled={launchBusy}
+                className="neon-primary flex items-center gap-2 text-sm px-5 py-2.5 disabled:opacity-60 disabled:cursor-wait"
+              >
+                {launchBusy ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    启动中…
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="h-4 w-4" />
+                    启动 WeGame
+                  </>
+                )}
               </button>
             ) : (
-              <button onClick={handleStopWeGame} className="neon-danger flex items-center gap-2 text-sm px-5 py-2.5">
-                <Square className="h-4 w-4" />
-                停止进程
+              <button
+                onClick={handleStopWeGame}
+                disabled={stopBusy}
+                className="neon-danger flex items-center gap-2 text-sm px-5 py-2.5 disabled:opacity-60 disabled:cursor-wait"
+              >
+                {stopBusy ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    停止中…
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-4 w-4" />
+                    停止进程
+                  </>
+                )}
               </button>
             )}
           </div>
