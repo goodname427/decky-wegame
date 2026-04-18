@@ -132,25 +132,84 @@ export function resolveWineBackendEnv(config?: EnvironmentConfig): {
  * wineserver to settle. This is idempotent — subsequent runs are cheap
  * because the file check short-circuits immediately.
  */
+/**
+ * A prefix is considered "healthy" for 64-bit wine use only when *all* of
+ * these files are present:
+ *   - drive_c/windows/syswow64/regedit.exe   (wineboot finished staging
+ *     the wow64 tree)
+ *   - drive_c/windows/syswow64/kernel32.dll  (32-bit kernel32 under wow64)
+ *   - drive_c/windows/system32/kernel32.dll  (64-bit kernel32)
+ *
+ * A single-file sentinel ("does regedit.exe exist?") has historically been
+ * enough, but in the field we have seen degraded prefixes where the
+ * sentinel file is present yet a core DLL is missing — wine64 then refuses
+ * to start with `c0000135 (DLL_NOT_FOUND)`. We have also seen prefixes
+ * that only contain a 32-bit `system32/` tree (no `syswow64/` at all),
+ * which makes wine64 unable to load kernel32 as well. Checking the full
+ * triple catches both failure modes up front.
+ */
+function collectPrefixHealthStatus(prefix: string): {
+  healthy: boolean;
+  missing: string[];
+} {
+  const required = [
+    path.join(prefix, "drive_c", "windows", "syswow64", "regedit.exe"),
+    path.join(prefix, "drive_c", "windows", "syswow64", "kernel32.dll"),
+    path.join(prefix, "drive_c", "windows", "system32", "kernel32.dll"),
+  ];
+  const missing = required.filter((p) => !fs.existsSync(p));
+  return { healthy: missing.length === 0, missing };
+}
+
 export async function ensureWinePrefixInitialized(
   prefixPath: string,
   env: Record<string, string>,
   emitter?: { emitLog: (log: LogPayload) => void }
 ): Promise<void> {
   const prefix = expandPath(prefixPath);
-  const sentinel = path.join(prefix, "drive_c", "windows", "syswow64", "regedit.exe");
-  if (fs.existsSync(sentinel)) {
+
+  const health = collectPrefixHealthStatus(prefix);
+  if (health.healthy) {
     return; // already initialized — fast path
   }
 
-  log.info(`[wineboot] prefix not initialized (missing ${sentinel}), running wineboot --init`);
-  emitter?.emitLog({
-    level: "info",
-    message: "首次初始化 Wine 前缀中，请稍候（这一步只做一次，可能需要 30 秒～1 分钟）...",
-    timestamp: new Date().toTimeString().slice(0, 8),
-  });
+  // Decide whether this is a "first-time init" or a "repair an existing
+  // broken prefix" case. The user-facing message differs slightly, and only
+  // the latter needs a hard wipe.
+  const prefixExists = fs.existsSync(prefix);
+  const isRepair = prefixExists && fs.readdirSync(prefix).length > 0;
 
-  // Ensure prefix dir exists; wineboot will populate the rest.
+  if (isRepair) {
+    log.warn(
+      `[wineboot] prefix exists but is unhealthy, missing:\n  - ${health.missing.join("\n  - ")}\n  → wiping and re-initializing`
+    );
+    emitter?.emitLog({
+      level: "warn",
+      message:
+        "检测到 Wine 前缀残缺（缺少关键 DLL），将清空该目录后重新初始化。这通常发生在之前的 wineboot 被中断或 arch 不一致时。",
+      timestamp: new Date().toTimeString().slice(0, 8),
+    });
+    // Hard wipe: remove the whole prefix directory so wineboot has a
+    // guaranteed clean slate. Our prefix directory is, by convention,
+    // owned entirely by this app (default is ~/.local/share/decky-wegame/prefix),
+    // so it's safe to nuke.
+    try {
+      fs.rmSync(prefix, { recursive: true, force: true });
+    } catch (err) {
+      throw new Error(
+        `清理残缺的 Wine 前缀失败：${(err as Error).message}。请手动删除 ${prefix} 后重试。`
+      );
+    }
+  } else {
+    log.info(`[wineboot] prefix not initialized (${prefix}), running wineboot --init`);
+    emitter?.emitLog({
+      level: "info",
+      message: "首次初始化 Wine 前缀中，请稍候（这一步只做一次，可能需要 30 秒～1 分钟）...",
+      timestamp: new Date().toTimeString().slice(0, 8),
+    });
+  }
+
+  // (Re-)create prefix dir; wineboot will populate the rest.
   fs.mkdirSync(prefix, { recursive: true });
 
   const wineCmd = env.WINE || env.WINE64;
@@ -158,10 +217,14 @@ export async function ensureWinePrefixInitialized(
     throw new Error("内部错误：缺少 WINE 环境变量，无法初始化 prefix");
   }
 
-  // Force WINEPREFIX onto the resolved absolute path.
+  // Force WINEPREFIX onto the resolved absolute path, and explicitly pin
+  // WINEARCH=win64 so a stray shell export (or an environment where wine
+  // would otherwise infer win32) cannot produce a 32-bit-only prefix
+  // that wine64 then fails to load.
   const bootEnv: Record<string, string> = {
     ...env,
     WINEPREFIX: prefix,
+    WINEARCH: "win64",
     // wineboot itself must NOT be muffled by -all or we'll lose useful errors
     WINEDEBUG: env.WINEDEBUG || "-all",
   };
@@ -198,8 +261,9 @@ export async function ensureWinePrefixInitialized(
     child.on("close", (code) => {
       clearTimeout(hardTimeout);
       clearInterval(idleTimer);
-      if (code === 0 || fs.existsSync(sentinel)) {
-        // Even if exit code isn't zero, if regedit.exe is now present the
+      const post = collectPrefixHealthStatus(prefix);
+      if (code === 0 || post.healthy) {
+        // Even if exit code isn't zero, if the prefix is now healthy the
         // init essentially succeeded — wineboot is known to exit non-zero
         // on various harmless warnings.
         resolve();
@@ -223,6 +287,17 @@ export async function ensureWinePrefixInitialized(
     } catch {
       // best-effort
     }
+  }
+
+  // Post-init health check: if wineboot reported success but the prefix
+  // still doesn't have the core DLLs, fail loudly instead of letting the
+  // caller proceed into an inevitable c0000135.
+  const finalHealth = collectPrefixHealthStatus(prefix);
+  if (!finalHealth.healthy) {
+    const detail = finalHealth.missing.join("\n  - ");
+    throw new Error(
+      `Wine 前缀初始化完成但仍缺少关键文件，可能是所选 Proton 不完整或磁盘空间不足：\n  - ${detail}\n\n建议重新下载 GE-Proton 后重试。`
+    );
   }
 
   log.info("[wineboot] prefix initialized");

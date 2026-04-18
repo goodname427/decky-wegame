@@ -8,7 +8,7 @@
 - **项目名称**：WeGame Launcher（decky-wegame）
 - **目标平台**：SteamOS / Steam Deck（Linux）
 - **目标用户**：希望在 Steam Deck 上运行腾讯 WeGame 平台及其游戏的玩家
-- **当前版本**：v1.8.1
+- **当前版本**：v1.8.2
 - **最后更新**：2026-04-18
 
 ---
@@ -109,9 +109,17 @@
 - 点击「开始安装」后：
   1. 保存环境配置
   2. 初始化 Wine Prefix
-  3. **基础初始化兜底**：检测 `<prefix>/drive_c/windows/syswow64/regedit.exe` 是否存在；
-     不存在则自动调用 `wine64 wineboot --init`，避免后续 winetricks 安装字体/依赖时踩
-     `c0000135 (DLL_NOT_FOUND)` 坑。
+  3. **基础初始化兜底**：对 Wine 前缀做**三文件健康检查**——
+     `<prefix>/drive_c/windows/syswow64/regedit.exe`、
+     `<prefix>/drive_c/windows/syswow64/kernel32.dll`、
+     `<prefix>/drive_c/windows/system32/kernel32.dll` 必须全部存在。
+     任一缺失即视为前缀残缺：
+     - 若前缀目录为空或不存在，直接运行 `wine64 wineboot --init` 完成首次初始化。
+     - 若前缀目录已存在但缺失其一（例如之前的 wineboot 被中断、或曾被以 32-bit 模式初始化过），
+       **先将整个前缀目录清空**，再运行 `wine64 wineboot --init` 重建，
+       随后复核三文件健康状态；仍不健康时中止并提示用户重下 GE-Proton。
+     `wineboot` 运行时显式固定 `WINEARCH=win64`，避免外部环境变量污染导致 arch 不一致。
+     这一兜底用来规避后续 winetricks 或 WeGame 安装器踩 `c0000135 (DLL_NOT_FOUND)` 的坑。
   4. 检测 winetricks 是否可用：
      - 不可用 → **弹出密码输入弹窗**（见 4.1.1）
      - 可用 → 直接开始依赖安装

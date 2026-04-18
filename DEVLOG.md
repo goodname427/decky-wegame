@@ -6,6 +6,18 @@
 
 ---
 
+## 2026-04-18 — 修复残缺 Wine 前缀导致 WeGame 安装器 `c0000135` 卡死（v1.8.2）
+- **问题现象**：点「选择本地安装器文件」运行 `WeGameSetup.exe` 时，installer 日志反复出现 `wine: could not load kernel32.dll, status c0000135` 与 `installer exited with code=53`；即便手动 `rm -rf` 整个 prefix 后重装，应用重新跑完 `wineboot --init`，现象仍不消失。
+- **根因**：`ensureWinePrefixInitialized` 原本只用单文件哨兵 `syswow64/regedit.exe` 判断前缀是否已初始化。现场命中了两种退化场景：(a) 哨兵文件存在但 `kernel32.dll` 缺失；(b) 前缀被以 32-bit 模式建好（只有 `system32/` 没有 `syswow64/`），哨兵直接不存在但 wine64 启动仍失败。第二种情况还会被 wineboot 自身误判为"已有前缀、不需要重建"从而卡住。
+- **方案（粗暴但可预期）**：
+  - 把哨兵升级为**三文件健康检查**：`syswow64/regedit.exe`、`syswow64/kernel32.dll`、`system32/kernel32.dll` 必须同时存在，任一缺失即视为前缀残缺。
+  - 前缀残缺时**直接 `rm -rf` 整个前缀目录**再重跑 `wineboot --init`（默认 prefix 位于 `~/.local/share/decky-wegame/prefix`，按约定由本应用独占，纵向清理安全）。
+  - wineboot 的 bootEnv 里**显式固定 `WINEARCH=win64`**，阻断外部 shell 可能注入的 `WINEARCH=win32` 污染。
+  - wineboot 返回后**再跑一次健康检查**，失败就抛出包含缺失文件列表的错误，不让后续步骤踩入必死的 `c0000135`。
+- **关键决策**：选择"粗暴清空 + 全量重建"而不是"只清 `drive_c/`、保留用户文件"。前缀根目录按项目约定是纯 wine 目录，没有用户自有数据，用粗暴方案可最大程度保证 wineboot 的可重复性，避免遗留残渣再次造成退化。
+- **关键文件**：`electron/backend/dependencies.ts`（新增 `collectPrefixHealthStatus`、重写 `ensureWinePrefixInitialized`）、`PRD.md`（§4.1 step 3）、`README.md`、`package.json`、`DEVLOG.md`
+
+
 ## 2026-04-16 ～ 2026-04-17 — 项目初始化与技术栈确立
 
 - **项目目标**：在 SteamOS / Steam Deck 上运行腾讯 WeGame 平台及其游戏。

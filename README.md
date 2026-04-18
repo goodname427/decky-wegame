@@ -2,7 +2,7 @@
 
 一款运行在 SteamOS / Steam Deck 上的独立桌面应用，用于在 Linux 环境下配置和启动腾讯 WeGame 游戏平台。
 
-> 当前版本：**v1.8.1** · 需求定义见 [PRD.md](./PRD.md)，关键开发记录见 [DEVLOG.md](./DEVLOG.md)
+> 当前版本：**v1.8.2** · 需求定义见 [PRD.md](./PRD.md)，关键开发记录见 [DEVLOG.md](./DEVLOG.md)
 
 ## 功能特性
 
