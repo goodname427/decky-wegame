@@ -131,6 +131,27 @@
 - **不包含跳过安装功能**（跳过功能只在向导中）
 - **状态检测**：通过 `checkInstalledWinetricks()` 查询 wine prefix 下已安装的包；安装完成后自动刷新。
 
+#### 4.2.2.1 依赖安装后端（Wine 后端注入，重要）
+
+- **后端选择策略**：依赖安装时，**始终使用当前用户选定的 Proton（`config.proton_path`）内置的 wine / wineserver 作为后端**。
+  - 原因 1：SteamOS / Steam Deck 系统默认不提供独立 `wine` / `wineserver`，系统 PATH 里找不到。
+  - 原因 2：让依赖安装使用的 wine 版本与启动 WeGame 时使用的 wine 版本保持一致，避免 prefix 状态错乱（如依赖装在 wine-7，游戏跑在 wine-9）。
+- **Proton wine 目录解析规则**（按顺序尝试，取第一个存在的）：
+  1. `<ProtonDir>/files/bin`（GE-Proton / 新版 Proton 官方版）
+  2. `<ProtonDir>/dist/bin`（旧版 Proton 官方版）
+  - `<ProtonDir>` = `dirname(config.proton_path)`
+- **注入到 winetricks 子进程的环境变量**：
+  - `PATH = <ProtonBin>:$PATH`
+  - `WINE = <ProtonBin>/wine64`（若不存在则 `wine`）
+  - `WINESERVER = <ProtonBin>/wineserver`
+  - `WINELOADER = <ProtonBin>/wine`
+  - `WINEDLLPATH = <ProtonDir>/files/lib64/wine:<ProtonDir>/files/lib/wine`（存在则加）
+  - `WINEPREFIX = config.wine_prefix_path`
+  - `WINEARCH = win64`
+  - `DISPLAY = :0`
+- **失败处理**：若未选中 Proton 或解析不到 `<ProtonBin>/wineserver`，**立刻终止安装流程**并向前端上报清晰错误（如 "未找到可用的 Wine 后端：请先在『配置向导』或『依赖管理』中选定一个 Proton 版本"），**不得**继续逐项调用 winetricks 以制造假进度。
+- **`checkInstalledWinetricks`** 在查询 wine prefix 已安装包时使用相同的 env 注入规则。
+
 #### 4.2.3 中间层管理（新增区块）
 
 针对 Wine、winetricks、Proton 三类中间层，统一入口进行管理：
@@ -325,6 +346,7 @@
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-04-18 | v1.3 | 修复依赖安装失败（`wineserver not found`）：明确依赖安装必须使用所选 Proton 内置的 wine/wineserver，补充 §4.2.2.1；无可用 Wine 后端时立即终止并上报清晰错误 |
 | 2026-04-18 | v1.2 | 重构设置界面：基础设置改为立即生效（防抖）、路径/重置/重新配置入口迁移到依赖管理子页签，并在依赖管理新增中间层（Wine/winetricks/Proton）管理能力 |
 | 2026-04-18 | v1.1 | 修复密码验证问题：前端调用 install_winetricks 但后端未注册 IPC 处理函数，导致密码错误提示 |
 | 2026-04-18 | v1.0 | 初始版本：整理之前所有需求，建立 PRD |

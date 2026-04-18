@@ -65,7 +65,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   // Dependencies
   ipcMain.handle("get_dependency_list", async (_event, args?: { config?: EnvironmentConfig }) => {
     const prefixPath = args?.config ? getPrefixPath(args.config) : undefined;
-    return getDependencyList(prefixPath);
+    return getDependencyList(prefixPath, args?.config);
   });
 
   ipcMain.handle("install_winetricks", async (_event, args: { password: string }) => {
@@ -95,7 +95,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
         emitLog: (log) => {
           win?.webContents.send("log-event", log);
         },
-      }, args.sudoPassword);
+      }, args.sudoPassword, args.config);
     } finally {
       installing = false;
     }

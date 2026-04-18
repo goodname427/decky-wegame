@@ -1,6 +1,97 @@
 import { spawn, execSync } from "child_process";
-import { DependencyItem, DependencyCategory, InstallProgress, LogPayload } from "./types";
+import fs from "fs";
+import path from "path";
+import { DependencyItem, DependencyCategory, EnvironmentConfig, InstallProgress, LogPayload } from "./types";
+import { expandPath } from "./environment";
+import { scanProtonVersions, getDefaultProtonPath } from "./proton";
 import { depsLogger as log } from "./logger";
+
+/**
+ * Resolve environment variables required to run winetricks using the wine
+ * runtime bundled with the user-selected Proton.
+ *
+ * On SteamOS / Steam Deck there is typically no standalone `wine` /
+ * `wineserver` in PATH, so winetricks fails with "wineserver not found!".
+ * This helper injects the Proton-bundled wine binaries so winetricks and
+ * the configuration uses exactly the same wine as the launcher does.
+ *
+ * @throws Error with a user-friendly message when no usable wine backend can
+ *         be resolved. Caller must surface this error to the UI instead of
+ *         silently continuing the install loop.
+ */
+export function resolveWineBackendEnv(config?: EnvironmentConfig): {
+  env: Record<string, string>;
+  protonDir: string;
+  protonBin: string;
+} {
+  // 1. Determine Proton executable path (user-selected or auto-detected)
+  let protonExe: string | undefined;
+  if (config?.proton_path) {
+    protonExe = expandPath(config.proton_path);
+  }
+  if (!protonExe || !fs.existsSync(protonExe)) {
+    const versions = scanProtonVersions();
+    const auto = getDefaultProtonPath(versions);
+    if (auto) protonExe = auto;
+  }
+
+  if (!protonExe || !fs.existsSync(protonExe)) {
+    throw new Error(
+      "未找到可用的 Wine 后端：请先在『配置向导』或『依赖管理 → 中间层管理』中选定一个 Proton 版本，或点击『下载最新 GE-Proton』。"
+    );
+  }
+
+  // 2. Locate Proton's bundled wine bin directory (files/bin or dist/bin)
+  const protonDir = path.dirname(protonExe);
+  const candidateBinDirs = [
+    path.join(protonDir, "files", "bin"),
+    path.join(protonDir, "dist", "bin"),
+  ];
+  const protonBin = candidateBinDirs.find((p) => fs.existsSync(p));
+  if (!protonBin) {
+    throw new Error(
+      `所选 Proton 目录下未找到 wine 运行时（期望目录：${candidateBinDirs.join(" 或 ")}）。请检查 Proton 是否完整。`
+    );
+  }
+
+  // 3. Locate wine / wine64 / wineserver
+  const wineserver = path.join(protonBin, "wineserver");
+  if (!fs.existsSync(wineserver)) {
+    throw new Error(
+      `Proton 自带的 wineserver 不存在：${wineserver}。请尝试重新下载 GE-Proton。`
+    );
+  }
+  const wine64 = path.join(protonBin, "wine64");
+  const wine = path.join(protonBin, "wine");
+  const wineCmd = fs.existsSync(wine64) ? wine64 : wine;
+  const wineloader = fs.existsSync(wine) ? wine : wineCmd;
+
+  // 4. Compose WINEDLLPATH (optional, helps wine find dlls)
+  const dllPaths: string[] = [];
+  for (const rel of ["files/lib64/wine", "files/lib/wine", "dist/lib64/wine", "dist/lib/wine"]) {
+    const p = path.join(protonDir, rel);
+    if (fs.existsSync(p)) dllPaths.push(p);
+  }
+
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    PATH: `${protonBin}:${process.env.PATH ?? ""}`,
+    WINE: wineCmd,
+    WINE64: wine64,
+    WINELOADER: wineloader,
+    WINESERVER: wineserver,
+    WINEARCH: "win64",
+    DISPLAY: process.env.DISPLAY || ":0",
+  };
+  if (dllPaths.length > 0) {
+    env.WINEDLLPATH = dllPaths.join(":");
+  }
+  if (config?.wine_prefix_path) {
+    env.WINEPREFIX = expandPath(config.wine_prefix_path);
+  }
+
+  return { env, protonDir, protonBin };
+}
 
 interface DependencyDef {
   id: string;
@@ -55,12 +146,25 @@ function winetricksId(depId: string): string {
  * Check which winetricks packages are already installed in the given prefix.
  * Uses `winetricks list-installed` if available, otherwise falls back to
  * checking known registry keys / files in the prefix.
+ *
+ * When a config is provided, the Proton-bundled wine runtime is injected into
+ * the child env so this also works on SteamOS where no standalone wine exists.
  */
-function checkInstalledWinetricks(prefixPath: string): Set<string> {
+function checkInstalledWinetricks(prefixPath: string, config?: EnvironmentConfig): Set<string> {
   const installed = new Set<string>();
+  let childEnv: Record<string, string> = { ...(process.env as Record<string, string>), WINEPREFIX: prefixPath };
+  if (config) {
+    try {
+      const { env } = resolveWineBackendEnv(config);
+      childEnv = { ...env, WINEPREFIX: prefixPath };
+    } catch {
+      // Non-fatal here: if we cannot resolve wine backend during status query,
+      // just fall back to the plain env; list may be empty but that is OK.
+    }
+  }
   try {
     const output = execSync("winetricks list-installed", {
-      env: { ...process.env, WINEPREFIX: prefixPath },
+      env: childEnv,
       encoding: "utf-8",
       timeout: 15000,
     });
@@ -77,8 +181,8 @@ function checkInstalledWinetricks(prefixPath: string): Set<string> {
   return installed;
 }
 
-export function getDependencyList(prefixPath?: string): DependencyItem[] {
-  const installed = prefixPath ? checkInstalledWinetricks(prefixPath) : new Set<string>();
+export function getDependencyList(prefixPath?: string, config?: EnvironmentConfig): DependencyItem[] {
+  const installed = prefixPath ? checkInstalledWinetricks(prefixPath, config) : new Set<string>();
 
   return DEPENDENCY_DEFINITIONS.map((def) => {
     const wtId = winetricksId(def.id);
@@ -177,12 +281,42 @@ export async function installDependencies(
   winePrefixPath: string,
   selectedIds: string[],
   emitter: ProgressEmitter,
-  sudoPassword?: string
+  sudoPassword?: string,
+  config?: EnvironmentConfig
 ): Promise<void> {
   log.separator();
   log.info("=== Dependency Installation Start ===");
   log.info(`Wine prefix: ${winePrefixPath}`);
   log.info(`Selected dependencies: ${selectedIds.join(", ")}`);
+
+  // Resolve the wine backend (from Proton) up front. If this fails, abort
+  // immediately — do NOT loop over every dep just to fail each one.
+  let backendEnv: Record<string, string>;
+  try {
+    const resolved = resolveWineBackendEnv(config);
+    backendEnv = resolved.env;
+    log.info(`Wine backend resolved: protonBin=${resolved.protonBin}`);
+    log.info(`  WINE=${backendEnv.WINE}`);
+    log.info(`  WINESERVER=${backendEnv.WINESERVER}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error(`Cannot resolve wine backend: ${msg}`);
+    emitter.emitLog({
+      level: "error",
+      message: msg,
+      timestamp: new Date().toTimeString().slice(0, 8),
+    });
+    emitter.emitProgress({
+      current_dependency: "",
+      current_step: "无法启动依赖安装",
+      progress_percent: 0,
+      total_steps: selectedIds.length,
+      completed_steps: 0,
+      status: "error",
+      error_message: msg,
+    });
+    throw err;
+  }
 
   // Check if winetricks is available
   if (!isWinetricksAvailable()) {
@@ -241,7 +375,7 @@ export async function installDependencies(
     });
 
     try {
-      await runWinetricksSingle(winePrefixPath, wtId, emitter);
+      await runWinetricksSingle(winePrefixPath, wtId, emitter, backendEnv);
       completed++;
       log.info(`[${idx + 1}/${total}] Successfully installed: ${depId}`);
       emitter.emitProgress({
@@ -308,11 +442,12 @@ export async function installDependencies(
 function runWinetricksSingle(
   prefixPath: string,
   wtId: string,
-  emitter: ProgressEmitter
+  emitter: ProgressEmitter,
+  backendEnv: Record<string, string>
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn("winetricks", ["-q", "--unattended", wtId], {
-      env: { ...process.env, WINEPREFIX: prefixPath, DISPLAY: ":0" },
+      env: { ...backendEnv, WINEPREFIX: prefixPath },
     });
 
     let output = "";
