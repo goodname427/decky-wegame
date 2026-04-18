@@ -40,8 +40,10 @@ import { downloadAndInstallGeProton } from "./middleware";
 import {
   downloadAndInstallWegame,
   isWegameInstalled,
+  killRunningInstaller,
 } from "./wegame_installer";
 import { preseedWinetricksCache } from "./mirrors";
+import { runDiagnostics, type DiagnosticReport } from "./diagnostics";
 import { Log } from "./logger";
 
 const log = Log.category("AutoSetup");
@@ -91,6 +93,14 @@ export interface AutoSetupProgress {
     kind: "proton-fallback" | "deps-skipped" | "wegame-local-file";
     message: string;
   };
+  /**
+   * When stage 4 (WeGame install) fails, we automatically run the network /
+   * prefix diagnostics once and attach the report here, so the error card
+   * can show the user which hostnames were unreachable without them having
+   * to navigate to the dependencies page and click the diagnose button.
+   * Populated only on terminal error frames from the WeGame stage.
+   */
+  diagnosticReport?: DiagnosticReport;
 }
 
 export interface AutoSetupStartResult {
@@ -137,6 +147,17 @@ export function requestAutoSetupCancel(runId: string): AutoSetupCancelResult {
   }
   currentRun.cancelRequested = true;
   log.warn(`${runId}: cancel requested`);
+  // If we're currently in stage 4 with a Wine installer GUI up, the user
+  // pressing cancel should tear that subtree down right away — otherwise
+  // the installer can linger for 1-2 minutes while we sit on the next
+  // stage boundary check, which looks like the cancel button is broken.
+  // killRunningInstaller is a no-op if there's no installer running, so
+  // it's safe to call unconditionally here.
+  try {
+    killRunningInstaller();
+  } catch (err) {
+    log.warn(`${runId}: killRunningInstaller threw: ${(err as Error).message}`);
+  }
   return { cancelled: true };
 }
 
@@ -259,6 +280,7 @@ async function runLoop(state: RunState, emitter: AutoSetupEmitter): Promise<void
         message: stage4.message,
         error: stage4.error,
         degrade: stage4.degrade,
+        diagnosticReport: stage4.diagnosticReport,
       })
     );
     return;
@@ -291,6 +313,10 @@ interface StageResult {
   message: string;
   error?: string;
   degrade?: AutoSetupProgress["degrade"];
+  /** Stage-4 only: attached when we've already auto-run diagnostics for the
+   *  UI so runLoop can splice it into finalFrame without running a second
+   *  diagnosis. */
+  diagnosticReport?: DiagnosticReport;
 }
 
 async function stageProton(
@@ -523,21 +549,55 @@ async function stageWegame(
 
   if (!result.success) {
     const msg = result.error || "未知错误";
-    // Distinguish "all mirrors down" (offer local-file fallback) vs
-    // "installer ran but failed" (different UX).
+    // Two failure shapes we care about for the degrade hint:
+    //   1. mirror pool exhausted before installer even ran — detected by
+    //      error text pattern (download layer doesn't set needsLocalFile)
+    //   2. installer ran, exited code 0, but no WeGameLauncher.exe in prefix
+    //      — surfaced explicitly as result.needsLocalFile = true (set by
+    //      runWegameInstaller). This is the "Tencent CDN stalled" case.
+    // Both map to the same UX: offer "pick a local installer file".
     const looksLikeAllSources404 = /候选下载源均不可用|all.*sources|all.*mirrors|均不可用/i.test(msg);
+    const offerLocalFile = looksLikeAllSources404 || result.needsLocalFile === true;
+
+    // Auto-run a diagnostic pass so the error card can tell the user *why*
+    // (HTTPS blocked? DNS broken? no Proton?) without forcing them to
+    // navigate elsewhere. Diagnostics is best-effort — any failure here
+    // just means the card won't show the report section.
+    let diagnosticReport: DiagnosticReport | undefined;
+    try {
+      emitter.emitLog({
+        level: "info",
+        message: "[AutoSetup] WeGame 安装失败，自动运行网络 / 环境诊断以定位根因...",
+        timestamp: nowHms(),
+      });
+      diagnosticReport = await runDiagnostics(state.workingConfig);
+      const worstList = diagnosticReport.results
+        .filter((r) => r.status === "fail" || r.status === "warn")
+        .map((r) => `${r.status.toUpperCase()} ${r.id}: ${r.message}`);
+      if (worstList.length > 0) {
+        emitter.emitLog({
+          level: "warn",
+          message: `[AutoSetup] 诊断发现问题项：${worstList.join(" | ")}`,
+          timestamp: nowHms(),
+        });
+      }
+    } catch (err) {
+      log.warn(`${state.runId}: diagnostics after wegame failure threw: ${(err as Error).message}`);
+    }
+
     return {
       ok: false,
-      message: looksLikeAllSources404
-        ? "WeGame 所有下载源均不可用，请改用本地安装器文件"
+      message: offerLocalFile
+        ? "WeGame 在线安装未能完成，建议改用本地安装器文件"
         : `WeGame 安装失败：${msg.split("\n")[0]}`,
       error: msg,
-      degrade: looksLikeAllSources404
+      degrade: offerLocalFile
         ? {
             kind: "wegame-local-file",
-            message: "请在高级模式中点击「选择本地安装器文件」，导入你自行下载的 WeGameSetup.exe",
+            message: "点击下方「选择本地安装器文件」，从官网手动下载 WeGameSetup.exe 后导入",
           }
         : undefined,
+      diagnosticReport,
     };
   }
 
@@ -587,7 +647,7 @@ function emitProgress(
 function finalFrame(
   state: RunState,
   part: Pick<AutoSetupProgress, "stage" | "status" | "message"> &
-    Partial<Pick<AutoSetupProgress, "error" | "finalConfig" | "degrade" | "needsUser">>
+    Partial<Pick<AutoSetupProgress, "error" | "finalConfig" | "degrade" | "needsUser" | "diagnosticReport">>
 ): AutoSetupProgress {
   const stageIndex = STAGES.findIndex((s) => s.id === part.stage);
   return {
@@ -604,6 +664,7 @@ function finalFrame(
     finalConfig: part.finalConfig,
     degrade: part.degrade,
     needsUser: part.needsUser,
+    diagnosticReport: part.diagnosticReport,
   };
 }
 

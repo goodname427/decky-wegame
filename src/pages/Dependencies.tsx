@@ -132,10 +132,10 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
             <button
               onClick={onOpenSetupWizard}
               className="neon-primary flex items-center gap-1.5 text-sm"
-              title="重新打开环境设置向导"
+              title="回到欢迎页，可重新运行一键自动安装或进入高级模式"
             >
               <Wand2 className="h-3.5 w-3.5" />
-              重新配置环境
+              重新运行安装向导
             </button>
           )}
           <button

@@ -6,6 +6,71 @@
 
 ---
 
+## 2026-04-18 — 自动安装 UX 硬化：可取消、会自诊断、识别"静默失败"（v1.13.0）
+
+### 背景
+v1.12.0 在 Steam Deck 上实机跑通首启一键自动安装流程，暴露了几个体感问题：
+1. WeGame 安装器进度条 0% 一直不动，实际是 Tencent 下载器在 Wine 里跑不通，但 installer 进程 exit=0 静默退出；我们判断成功的条件是"prefix 里能找到 `WeGameLauncher.exe`"，所以判 failure，但错误文案没有给出有用的下一步，用户看到的只有"安装器已正常退出，但未找到"一句话
+2. "取消"按钮点了之后，`requestAutoSetupCancel` 只翻了个 flag，不 kill 正在跑的 installer 子进程，Wine 窗口还要挂 1-2 分钟才退，用户以为点了个死按钮
+3. 从 Dependencies 页「重新配置环境」入口进设置向导，v1.12.0 默认进 advanced 模式，但用户在 prefix 已建好、WeGame 没装上的情况下其实想的是"再跑一次一键"，而不是手调 5 步向导
+4. Wine 安装器下载阻塞时 WINEDEBUG 默认 `-all`，installer 日志里完全看不到 HTTPS/TLS 层的报错，诊断定位靠猜
+5. installer 在"看起来没动"时没有任何超时提示，用户只能一直等或者强杀
+
+本次全部修掉。
+
+### 变更概览
+
+**改造 `src/App.tsx` + `src/pages/Dependencies.tsx`（决策 A）**
+- SettingsPage 的 `onOpenSetupWizard` 回调从 `initialMode:'advanced'` 改为 `'welcome'`；自定义事件 `open-setup-wizard` 的默认值保持 `'advanced'`（因为它常被错误横幅触发，那些场景确实是"去修具体问题"的意图）
+- Dependencies 页顶部按钮文案 `重新配置环境` → `重新运行安装向导`，tooltip 同步到新语义
+- 结果：用户从依赖管理页进向导会先看到欢迎页，可重新选「一键自动」或「高级模式」
+
+**改造 `electron/backend/wegame_installer.ts`（决策 C1 + B1 + B2 + C2）**
+- 新增模块级 `currentInstallerChild: ChildProcess | null` + `export function killRunningInstaller()`：SIGTERM 当前 installer，30s 后仍存活则 SIGKILL 兜底
+- `runWegameInstaller` 的 env 增强：在原有 WINEDEBUG（默认 `-all`）基础上追加 `+winhttp,+wininet,+winsock`，让 installer.log 里出现真正有用的 HTTPS/TLS/Socket 层 trace
+- installer exit=0 但 prefix 没产出 `WeGameLauncher.exe` 的静默失败路径，返回值新增 `needsLocalFile: true` 标记 —— 调用方（auto-setup orchestrator）可直接用这个标记决定是否渲染"选择本地安装器文件"按钮，不再靠 Chinese regex 猜
+- close handler 识别 `signal === "SIGTERM" / "SIGKILL"` 短路为 `error: "cancelled"` 专属错误形状，避免被错归到"镜像池全败"类
+- 心跳同时充当 silence detector：3 分钟内 stdout/stderr 没有新行就 emit 一帧带 `warning: "installer-silent"` 的人话提示（文案含"3 分钟没有新输出"，UI 以此为关键词渲染黄色软警告条 + 切高级模式快捷按钮）
+- `InstallerProgress` 新增 `warning?: string` 字段作为 warning channel
+
+**改造 `electron/backend/auto_setup.ts`（决策 D1 + C1 联动）**
+- `requestAutoSetupCancel` 里在置 flag 之后额外调 `killRunningInstaller()`，解决"点取消要等 1-2 分钟"的体感
+- `stageWegame` 的失败分支：用 `result.needsLocalFile === true` 精准判定是否展示 local-file degrade（取代原 Chinese regex 模式）
+- `stageWegame` 失败时**自动运行一次** `runDiagnostics(config)`，把 `DiagnosticReport` 附到 `StageResult`；同时把 fail/warn 项的摘要 emit 到 log channel，便于用户在日志尾巴直接看到根因
+- `AutoSetupProgress` / `StageResult` / `finalFrame` 均新增 `diagnosticReport` 字段透传
+- `runLoop` stage 4 失败帧现在会把 diagnosticReport 传给 UI
+
+**改造 `src/components/AutoSetupScreen.tsx`（D1 + C2 前端）**
+- AutoSetupProgress 前端镜像类型增补 `diagnosticReport?` + 两个 lite 结构（不 import 后端）
+- error 卡片新增"环境诊断（自动运行）"区块：默认展示 fail/warn 项的人话摘要 + suggestion，`<details>` 折叠全部 N 项细节；若全部 pass/skip 则展示兜底提示"诊断未发现明显问题，建议改用本地安装器"
+- needs-user 阶段新增 `installer-silent` 软警告条：检测 frame.message 包含 "3 分钟没有新输出" 关键词时展示琥珀色警告 + "切到高级模式" 快捷按钮
+
+**版本号同步**（`package.json` 1.12.0 → 1.13.0 / `PRD.md` 顶部 + §4.1.0.1 补充 3 条行为描述 + §4.1.0.2 重写为"欢迎页入口 / 高级模式入口" 双段 + §4.2.1 按钮文案 + §4.4 章节表述 / `README.md` 顶部版本号 + 两条功能特性 / `DEVLOG.md` 本条目）
+
+### 关键技术决策
+
+- **Dependencies 入口改为 welcome 而不是 advanced**：v1.12.0 设计这个入口时假设"用户已在用产品 → 想调细节 → 进 advanced"；实测后发现，用户点这个按钮的实际场景更多是"上次自动装到一半卡了，再试一次"，进 advanced 反而让他看到 5 步向导蒙圈。改回 welcome 后，他既可以点大按钮再试一次，也可以随时点小按钮进 advanced，不损失任何能力但对齐默认意图
+- **靠 `needsLocalFile` 标记而不是 regex 判断失败形状**：原实现用 `/候选下载源均不可用|all.*sources/i.test(msg)` 做模糊匹配，遇到未来错误文案调整就会悄无声息失效。改成后端显式标记，意图更明确也更可测
+- **stage 4 失败自动跑诊断**：原设计是"失败 → 用户去依赖管理页点诊断按钮"，违反了 §1 P0 第 4 条"错误横幅必须给下一步操作"的精神。自动跑虽然会多等 2-5 秒，但换来的是用户在同一屏幕直接看到根因（HTTPS fail / DNS fail / proton missing 等），不用跳来跳去
+- **C1 选 SIGTERM + 30s SIGKILL 而不是直接 SIGKILL**：Wine 进程树里 wineserver 对 SIGTERM 有正常的 shutdown 路径（会清理 .reg 文件之类），SIGKILL 可能留半完成状态让下次启动崩溃；30s 兜底阈值对付极端情况下 wineserver refcount 卡住的场景
+- **WINEDEBUG 追加 `+winhttp,+wininet,+winsock` 而非替换**：尊重用户已设置的 WINEDEBUG；这三个 channel 专门针对当前"下载 0%"的病灶，不会产生 verbose 噪声（Wine 的日志火焰喷射开关是 `+relay`，我们**没**加）
+- **MINOR 升版（1.12.0 → 1.13.0）**：新增了"取消能真正退出"、"失败自动诊断"、"installer-silent 警告"等对外可见的默认行为增强；SetupWizard 从 Dependencies 进入的默认落地页也变了。按 §4 规则升 MINOR
+
+### 关键文件
+- 改造：`electron/backend/wegame_installer.ts`（+130 / -30；新增 killRunningInstaller + 3 分钟静默探测）
+- 改造：`electron/backend/auto_setup.ts`（+60 / -10；cancel 触发 kill + stage 4 失败自动诊断）
+- 改造：`src/App.tsx`（SettingsPage 回调改传 welcome）
+- 改造：`src/pages/Dependencies.tsx`（按钮文案 + tooltip）
+- 改造：`src/components/AutoSetupScreen.tsx`（error 卡诊断摘要 + needs-user 软警告条）
+- 同步：`package.json` / `PRD.md`（§4.1.0.1 / §4.1.0.2 / §4.2.1 / §4.4 + L79 提示）/ `README.md`（两条功能特性）
+
+### 未实现 / 已知限制
+- **诊断虽然跑了，但自动修复未实现**（原 M5 的 scope）：报告里 HTTPS 不通仍需用户自己想办法（换网 / 配代理 / 换镜像）。修复侧改成 M5/M6 的任务
+- **installer-silent 警告靠 stdout/stderr 静默检测**：有些 Wine GUI 安装器根本不向 stdout 写任何东西（比如完全 silent installer），这种情况下 3 分钟警告也会在正常进度下触发。权衡：宁可偶尔误触发也要让用户有感知，后续可考虑 5 分钟或结合 TenioDL 进程状态做更精细判断
+- **killRunningInstaller 对 Wine 子树不一定干净**：wineboot 会把部分子进程托管给 wineserver，SIGTERM 到 wine64 进程不一定连坐所有孩子。真正"干净取消"可能需要把整个 wineserver 停下，但那会影响其它并行 Wine 操作；当前实现已足够让 UI 进入 cancelled 态
+
+---
+
 ## 2026-04-18 — 欢迎页 + 自动配置进度页 落地（v1.12.0）
 
 ### 背景

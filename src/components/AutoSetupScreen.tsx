@@ -49,6 +49,22 @@ type AutoSetupStatus =
   | "cancelled"
   | "needs-user";
 
+interface DiagnosticResultLite {
+  id: string;
+  title: string;
+  status: "pass" | "warn" | "fail" | "skip";
+  message: string;
+  detail?: string;
+  suggestion?: string;
+  elapsedMs: number;
+}
+
+interface DiagnosticReportLite {
+  timestamp: string;
+  overall: "pass" | "warn" | "fail" | "skip";
+  results: DiagnosticResultLite[];
+}
+
 interface AutoSetupProgress {
   runId: string;
   stage: AutoSetupStage;
@@ -66,6 +82,10 @@ interface AutoSetupProgress {
     kind: "proton-fallback" | "deps-skipped" | "wegame-local-file";
     message: string;
   };
+  /** Attached by the backend when stage 4 fails; the UI renders a collapsible
+   *  summary in the error card to help the user see WHY it failed without
+   *  having to go hunt for the diagnose button. */
+  diagnosticReport?: DiagnosticReportLite;
 }
 
 interface LogLine {
@@ -336,6 +356,28 @@ export default function AutoSetupScreen({
                     💡 Wine 已弹出 WeGame 原生安装向导 — 请在该窗口中点击 "下一步 / 安装 / 完成"，安装完后本页面会自动继续。
                   </div>
                 )}
+                {/* C2: installer-silent soft warning. The backend injects the
+                    phrase "3 分钟没有新输出" into `message` after 3 minutes of
+                    stdout/stderr silence — we surface it visually here with
+                    quick-access escape buttons so the user doesn't have to
+                    hunt for them. */}
+                {frame.message.includes("3 分钟没有新输出") && !isTerminal && (
+                  <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-200/90">
+                    <div className="mb-1 font-medium">安装器疑似卡住</div>
+                    <div className="mb-2 text-amber-200/70">
+                      可能原因：腾讯 CDN 到当前网络的 TLS 握手被阻塞。继续等待不会有新进展。
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={handleEscape}
+                        className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-1 text-[10px] text-amber-100 hover:bg-amber-500/30 transition-colors"
+                      >
+                        <ArrowRight size={10} />
+                        <span>切到高级模式</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </>
@@ -423,6 +465,68 @@ export default function AutoSetupScreen({
               </div>
               {localFileError && (
                 <div className="mt-2 text-xs text-red-300">{localFileError}</div>
+              )}
+              {frame.diagnosticReport && (
+                <div className="mt-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-white">
+                    <AlertTriangle size={14} className="text-amber-400" />
+                    <span>环境诊断（自动运行）</span>
+                    <span
+                      className={
+                        frame.diagnosticReport.overall === "fail"
+                          ? "text-red-300"
+                          : frame.diagnosticReport.overall === "warn"
+                            ? "text-amber-300"
+                            : "text-emerald-300"
+                      }
+                    >
+                      · 总体：{frame.diagnosticReport.overall.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {frame.diagnosticReport.results
+                      .filter((r) => r.status === "fail" || r.status === "warn")
+                      .map((r) => (
+                        <div key={r.id} className="flex items-start gap-2 text-[11px]">
+                          <span
+                            className={
+                              r.status === "fail"
+                                ? "mt-0.5 font-mono font-bold text-red-300"
+                                : "mt-0.5 font-mono font-bold text-amber-300"
+                            }
+                          >
+                            {r.status.toUpperCase()}
+                          </span>
+                          <div className="flex-1">
+                            <span className="text-gray-200">{r.title}</span>
+                            <span className="ml-1 text-gray-400">— {r.message}</span>
+                            {r.suggestion && (
+                              <div className="mt-0.5 text-[10px] text-amber-200/70">
+                                建议：{r.suggestion}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    {frame.diagnosticReport.results.every(
+                      (r) => r.status === "pass" || r.status === "skip"
+                    ) && (
+                      <div className="text-[11px] text-gray-400">
+                        诊断未发现明显问题，但 WeGame 下载仍然失败。可能是腾讯 CDN 对当前网络有限流或封锁，建议改用本地安装器文件。
+                      </div>
+                    )}
+                  </div>
+                  <details className="mt-2 text-[10px] text-gray-500">
+                    <summary className="cursor-pointer">查看全部 {frame.diagnosticReport.results.length} 项诊断细节</summary>
+                    <div className="mt-1 space-y-0.5 font-mono">
+                      {frame.diagnosticReport.results.map((r) => (
+                        <div key={r.id}>
+                          [{r.status.padEnd(4, " ").toUpperCase()}] {r.id} — {r.message}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
               )}
               {frame.error && (
                 <details className="mt-3 text-[11px] text-gray-500">

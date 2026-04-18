@@ -1,12 +1,53 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import os from "os";
 import { EnvironmentConfig } from "./types";
 import { expandPath, getPrefixPath } from "./environment";
 import { resolveWineBackendEnv, ensureWinePrefixInitialized } from "./dependencies";
 import { installerLogger as log } from "./logger";
 import { downloadFromMirrorPool, expandMirrorCandidates } from "./mirrors";
+
+// ---------------------------------------------------------------------------
+// Module-scoped state: currently-running installer child process.
+// Exposed via killRunningInstaller() so the auto-setup cancel path can tear
+// the Wine subtree down without having to wait 1-2 minutes for the GUI to
+// time out on its own.
+// ---------------------------------------------------------------------------
+
+let currentInstallerChild: ChildProcess | null = null;
+
+/**
+ * Best-effort SIGTERM the currently-running WeGame installer (if any). If
+ * the child is still alive 30s later, we follow up with SIGKILL as a
+ * backstop — some Wine subtree configurations ignore SIGTERM because the
+ * wine server refcount keeps the winevdm / wineconsole children pinned.
+ *
+ * Returns true iff there was a live installer to signal. Safe to call
+ * multiple times; subsequent calls no-op.
+ */
+export function killRunningInstaller(): boolean {
+  const child = currentInstallerChild;
+  if (!child || child.killed || child.exitCode != null) return false;
+  log.warn("[wegame-install] SIGTERM to installer (user cancelled)");
+  try {
+    child.kill("SIGTERM");
+  } catch (err) {
+    log.warn(`[wegame-install] SIGTERM failed: ${(err as Error).message}`);
+  }
+  setTimeout(() => {
+    const stillThere = currentInstallerChild;
+    if (stillThere && !stillThere.killed && stillThere.exitCode == null) {
+      log.warn("[wegame-install] installer ignored SIGTERM; sending SIGKILL");
+      try {
+        stillThere.kill("SIGKILL");
+      } catch (err) {
+        log.warn(`[wegame-install] SIGKILL failed: ${(err as Error).message}`);
+      }
+    }
+  }, 30_000);
+  return true;
+}
 
 /**
  * WeGame installer subsystem (PRD §4.1.1 step 5 "Install WeGame").
@@ -62,6 +103,10 @@ export interface InstallerProgress {
   message?: string;
   /** Only set on "error". */
   error?: string;
+  /** Soft-warning tag surfaced on non-terminal frames (e.g. "installer-silent"
+   *  when the Wine installer hasn't produced any stdout/stderr for a while).
+   *  The UI may display a dismissible banner; never fatal on its own. */
+  warning?: string;
 }
 
 function getInstallerCacheDir(config?: EnvironmentConfig): string {
@@ -221,7 +266,7 @@ export async function runWegameInstaller(
   installerPath: string,
   config: EnvironmentConfig,
   onProgress?: (p: InstallerProgress) => void
-): Promise<{ success: boolean; exePath?: string; error?: string }> {
+): Promise<{ success: boolean; exePath?: string; error?: string; needsLocalFile?: boolean }> {
   const absInstaller = expandPath(installerPath);
   if (!fs.existsSync(absInstaller)) {
     const msg = `安装器文件不存在：${absInstaller}`;
@@ -271,7 +316,16 @@ export async function runWegameInstaller(
     return { success: false, error: msg };
   }
 
+  // Enable HTTP/TLS/socket tracing inside the Wine process so that if the
+  // WeGame setup.exe's own HTTPS fetch stalls (a frequent root cause on
+  // Steam Deck — Tencent CDN TLS handshake timing out through the default
+  // Valve routing), the installer.log actually contains a hint. We respect
+  // an existing WINEDEBUG value and only append our categories.
+  const baseDebug = env.WINEDEBUG && env.WINEDEBUG.trim() ? env.WINEDEBUG.trim() : "-all";
+  env.WINEDEBUG = `${baseDebug},+winhttp,+wininet,+winsock`;
+
   log.info(`[wegame-install] launching installer: ${wineCmd} ${absInstaller}`);
+  log.info(`[wegame-install] WINEDEBUG=${env.WINEDEBUG}`);
   onProgress?.({
     phase: "install",
     percent: 15,
@@ -284,11 +338,24 @@ export async function runWegameInstaller(
       stdio: ["ignore", "pipe", "pipe"],
       cwd: os.tmpdir(),
     });
+    // Publish the handle so outside callers (e.g. the auto-setup cancel
+    // path) can SIGTERM the Wine subtree without racing this Promise. The
+    // close handler clears it.
+    currentInstallerChild = child;
 
     // Heartbeat: tick progress slowly so the UI doesn't look stuck while
     // the user clicks through the installer wizard. Cap at 80% — the final
     // 20% is claimed after the installer exits AND we verify the binary.
+    //
+    // We also use the same interval to detect "installer has been silent
+    // for too long" and surface a soft warning exactly once. This is C2:
+    // after 3 minutes with no stdout/stderr output, we nudge the UI toward
+    // the "maybe switch to advanced mode / run diagnostics" escape hatch
+    // rather than leaving the user staring at a frozen progress bar.
     let tick = 15;
+    let lastOutputAt = Date.now();
+    let silenceWarned = false;
+    const SILENCE_WARN_MS = 3 * 60_000;
     const heartbeat = setInterval(() => {
       if (tick < 80) {
         tick += 1;
@@ -298,15 +365,34 @@ export async function runWegameInstaller(
           message: "安装进行中，请在 WeGame 安装向导里完成所有步骤...",
         });
       }
+      if (!silenceWarned && Date.now() - lastOutputAt > SILENCE_WARN_MS) {
+        silenceWarned = true;
+        log.warn(
+          `[wegame-install] installer silent for ${Math.floor((Date.now() - lastOutputAt) / 1000)}s — likely network stall`
+        );
+        onProgress?.({
+          phase: "install",
+          percent: tick,
+          message:
+            "安装器已 3 分钟没有新输出 — 通常是腾讯 CDN 下载被卡住。你可以：1) 继续等待；2) 切换到高级模式手动处理；3) 运行 WeGame 诊断查看网络状况。",
+          warning: "installer-silent",
+        });
+      }
     }, 5_000);
 
+    const bumpActivity = (): void => {
+      lastOutputAt = Date.now();
+    };
+
     child.stdout?.on("data", (data: Buffer) => {
+      bumpActivity();
       for (const line of data.toString().split("\n")) {
         const t = line.trim();
         if (t) log.info(`[wegame-install:stdout] ${t}`);
       }
     });
     child.stderr?.on("data", (data: Buffer) => {
+      bumpActivity();
       for (const line of data.toString().split("\n")) {
         const t = line.trim();
         if (t) log.warn(`[wegame-install:stderr] ${t}`);
@@ -315,6 +401,7 @@ export async function runWegameInstaller(
 
     child.on("error", (err) => {
       clearInterval(heartbeat);
+      currentInstallerChild = null;
       const msg = err.message;
       log.error(`[wegame-install] spawn error: ${msg}`);
       onProgress?.({
@@ -326,9 +413,25 @@ export async function runWegameInstaller(
       resolve({ success: false, error: msg });
     });
 
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearInterval(heartbeat);
-      log.info(`[wegame-install] installer exited with code=${code}`);
+      currentInstallerChild = null;
+      log.info(`[wegame-install] installer exited code=${code} signal=${signal ?? "-"}`);
+
+      // If we were killed via killRunningInstaller(), don't misblame the
+      // mirror pool — short-circuit with a cancel-shaped error so the
+      // auto-setup error card surfaces "cancelled" cleanly.
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        onProgress?.({
+          phase: "error",
+          percent: 0,
+          message: "安装器已被取消",
+          error: "cancelled",
+        });
+        resolve({ success: false, error: "cancelled" });
+        return;
+      }
+
       onProgress?.({
         phase: "install",
         percent: 90,
@@ -343,11 +446,23 @@ export async function runWegameInstaller(
           message: `WeGame 安装完成：${check.exePath}`,
         });
         resolve({ success: true, exePath: check.exePath });
-      } else {
+      } else if (code === 0) {
+        // Exit code 0 but no WeGameLauncher.exe on disk is the classic
+        // "Tencent setup downloader stalled at 0% then gave up quietly"
+        // failure mode. We flag it with needsLocalFile=true so the caller
+        // (auto-setup orchestrator) can render the "pick local installer"
+        // escape hatch without pattern-matching on Chinese error text.
         const msg =
-          code === 0
-            ? "安装器已正常退出，但未在 prefix 中找到 WeGameLauncher.exe。可能是您在向导中取消了安装，请重试。"
-            : `安装器退出码异常 (${code})，且未检测到 WeGame 已安装。请查看日志排查原因。`;
+          "安装器已正常退出，但未在 prefix 中找到 WeGameLauncher.exe — 这通常意味着腾讯 CDN 下载被网络阻塞。建议改用本地安装器文件。";
+        onProgress?.({
+          phase: "error",
+          percent: 0,
+          message: msg,
+          error: msg,
+        });
+        resolve({ success: false, error: msg, needsLocalFile: true });
+      } else {
+        const msg = `安装器退出码异常 (${code})，且未检测到 WeGame 已安装。请查看日志排查原因。`;
         onProgress?.({
           phase: "error",
           percent: 0,
@@ -371,7 +486,7 @@ export async function downloadAndInstallWegame(
   config: EnvironmentConfig,
   opts: { forceRedownload?: boolean } = {},
   onProgress?: (p: InstallerProgress) => void
-): Promise<{ success: boolean; exePath?: string; error?: string }> {
+): Promise<{ success: boolean; exePath?: string; error?: string; needsLocalFile?: boolean }> {
   const info = getInstallerInfo(config);
 
   let installerPath = info.cachedPath;

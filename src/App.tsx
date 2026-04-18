@@ -13,10 +13,16 @@ type WizardInitialMode = "welcome" | "advanced";
 
 interface WizardState {
   open: boolean;
-  /** Which screen the wizard should show first on open. "welcome" is the
-   *  first-run default (§4.1.0); "advanced" is the escape-hatch entry used
-   *  by the Dependencies page "重新配置环境" button (§4.1.0.2 item 3) and by
-   *  the AutoSetup screen's mid-run "切换到高级模式" button. */
+  /** Which screen the wizard should show first on open.
+   *  - "welcome"  : first-run default (§4.1.0); also used by the
+   *                Dependencies page "重新运行安装向导" button so users who
+   *                already have a partial setup can still re-try a full
+   *                one-click automatic install (which is what most users
+   *                actually want when they click this entry point).
+   *  - "advanced" : used by the AutoSetup screen's mid-run "切换到高级模式"
+   *                button, and by window events dispatched from error
+   *                banners — both contexts imply the user has already
+   *                committed to hand-tuning. */
   initialMode: WizardInitialMode;
 }
 
@@ -86,7 +92,7 @@ export default function App() {
                 element={
                   <SettingsPage
                     onOpenSetupWizard={() =>
-                      setWizard({ open: true, initialMode: "advanced" })
+                      setWizard({ open: true, initialMode: "welcome" })
                     }
                   />
                 }
