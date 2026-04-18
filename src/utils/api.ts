@@ -136,3 +136,11 @@ export const installWegame = (config: any, forceRedownload?: boolean) =>
   invoke("install_wegame", { config, forceRedownload });
 export const clearWegameInstallerCache = (config?: any) =>
   invoke("clear_wegame_installer_cache", config ? { config } : undefined);
+
+// v1.8.1: pick a local installer file via native dialog, and install from it.
+// Returns { canceled: boolean; filePath?: string } from the picker, and the
+// same { success; exePath?; error? } shape as install_wegame from the install.
+export const pickWegameInstaller = () =>
+  invoke<{ canceled: boolean; filePath?: string }>("pick_wegame_installer");
+export const installWegameFromLocal = (config: any, localPath: string) =>
+  invoke("install_wegame_from_local", { config, localPath });

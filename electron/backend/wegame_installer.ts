@@ -26,13 +26,32 @@ import { installerLogger as log } from "./logger";
  * which was never documented anywhere.
  */
 
-// Official Tencent WeGame installer. This is the stable "direct download"
-// URL referenced by the public wegame.com.cn landing page. Users can
-// override via EnvironmentConfig.wegame_installer_url if they already have
-// a local mirror or newer build.
-const DEFAULT_WEGAME_INSTALLER_URL =
-  "https://dldir1.qq.com/WeGame/Setup/WeGameSetup.exe";
+// WeGame 官方下载策略（v1.8.1）：
+// -----------------------------------------------------------------------
+// 腾讯已不再提供 WeGame 本体的稳定公网静态直链（历史 URL
+// https://dldir1.qq.com/WeGame/Setup/WeGameSetup.exe 现在返回 404）。
+// pc.qq.com 的"立即下载"按钮实际上走的是腾讯电脑管家存根 + JS 动态合成，
+// 既无法在 Linux/Wine 场景用，也随时可能再次变化。
+//
+// 因此方案：
+//   1. 默认推荐"本地文件"：让用户自行从官方站点下载 .exe 后选中本地路径。
+//      这是最稳的路径，与任何 CDN 变动解耦。
+//   2. 仍保留"在线下载"作实验性兜底：按一个 URL 候选列表顺序探测，只要有
+//      一个返回 HTTP 2xx 且 Content-Length 像合理安装包（>1MB）就用。用户
+//      可通过 EnvironmentConfig.extra_env_vars.WEGAME_INSTALLER_URL 加自己
+//      的镜像（例如内网或 GitHub Release）做最高优先级尝试。
+//
+// 所有候选 URL 在出厂时都可能已失效——这是设计内接受的状态，而不是 bug。
+// 一旦全部失败，后端会返回明确的 "all-sources-404" 错误；前端会把用户
+// 引导回"选择本地文件"的交互。
+const DEFAULT_WEGAME_INSTALLER_URL_CANDIDATES: readonly string[] = [
+  // 历史官方直链：保留以防腾讯恢复；当前全部 404，但成本仅是一次 HEAD 请求
+  "https://dldir1.qq.com/WeGame/Setup/WeGameSetup.exe",
+  "https://dldir1.qq.com/wegame/WeGameSetup.exe",
+  "https://dldir1.qq.com/wegame/Setup/WeGameSetup.exe",
+];
 const DEFAULT_INSTALLER_FILENAME = "WeGameSetup.exe";
+const OFFICIAL_DOWNLOAD_PAGE_URL = "https://www.wegame.com.cn/";
 
 export interface InstallerInfo {
   /** Local cached path (may not yet exist). */
@@ -41,8 +60,18 @@ export interface InstallerInfo {
   cached: boolean;
   /** Size on disk in bytes, or 0. */
   sizeBytes: number;
-  /** Default remote URL (can be overridden by config). */
-  defaultDownloadUrl: string;
+  /**
+   * All candidate remote URLs that will be tried in order during the online
+   * "download installer" flow. The first entry is the user-overridden URL
+   * (if any), followed by the built-in fallbacks.
+   *
+   * NOTE: in v1.8.1+ the recommended path is to let the user supply a local
+   * .exe. This field is kept so the UI can still offer an "online download"
+   * button as a best-effort experimental fallback.
+   */
+  downloadUrlCandidates: string[];
+  /** Official download page URL shown to the user when all mirrors fail. */
+  officialDownloadPage: string;
 }
 
 export type InstallerPhase = "download" | "install" | "done" | "error";
@@ -61,6 +90,18 @@ function getInstallerCacheDir(config?: EnvironmentConfig): string {
   if (custom) return expandPath(custom);
   // Follow the same convention as winetricks / GE-Proton caches
   return expandPath("~/.cache/decky-wegame/installers");
+}
+
+/** Build the ordered list of candidate URLs. User override (if set) takes
+ *  priority over all built-in fallbacks. Dedup while preserving order. */
+function resolveDownloadUrlCandidates(config?: EnvironmentConfig): string[] {
+  const user = config?.extra_env_vars?.WEGAME_INSTALLER_URL;
+  const out: string[] = [];
+  if (user && user.trim()) out.push(user.trim());
+  for (const u of DEFAULT_WEGAME_INSTALLER_URL_CANDIDATES) {
+    if (!out.includes(u)) out.push(u);
+  }
+  return out;
 }
 
 export function getInstallerInfo(config?: EnvironmentConfig): InstallerInfo {
@@ -85,7 +126,8 @@ export function getInstallerInfo(config?: EnvironmentConfig): InstallerInfo {
     cachedPath,
     cached,
     sizeBytes,
-    defaultDownloadUrl: DEFAULT_WEGAME_INSTALLER_URL,
+    downloadUrlCandidates: resolveDownloadUrlCandidates(config),
+    officialDownloadPage: OFFICIAL_DOWNLOAD_PAGE_URL,
   };
 }
 
@@ -176,55 +218,168 @@ function downloadToFile(
 }
 
 /**
+ * Probe a URL with HEAD to verify it returns 2xx and an expected content-length.
+ * Used to quickly skip 404/410 mirrors before committing to a full download.
+ */
+function probeUrl(url: string, timeoutMs = 10_000): Promise<{
+  ok: boolean;
+  statusCode: number;
+  contentLength: number;
+  finalUrl: string;
+}> {
+  return new Promise((resolve) => {
+    const start = (u: string, depth: number) => {
+      if (depth > 5) {
+        resolve({ ok: false, statusCode: 0, contentLength: 0, finalUrl: u });
+        return;
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(u);
+      } catch {
+        resolve({ ok: false, statusCode: 0, contentLength: 0, finalUrl: u });
+        return;
+      }
+      const proto = parsed.protocol === "https:" ? https : http;
+      const req = proto.request(
+        u,
+        { method: "HEAD", headers: { "User-Agent": "WeGame-Launcher" } },
+        (res) => {
+          const code = res.statusCode || 0;
+          if (code >= 300 && code < 400 && res.headers.location) {
+            res.resume();
+            start(res.headers.location, depth + 1);
+            return;
+          }
+          const len = parseInt(
+            (res.headers["content-length"] as string | undefined) || "0",
+            10
+          );
+          res.resume();
+          resolve({
+            ok: code === 200 && len > 1_000_000,
+            statusCode: code,
+            contentLength: len,
+            finalUrl: u,
+          });
+        }
+      );
+      req.on("error", () => {
+        resolve({ ok: false, statusCode: 0, contentLength: 0, finalUrl: u });
+      });
+      req.setTimeout(timeoutMs, () => {
+        req.destroy();
+        resolve({ ok: false, statusCode: 0, contentLength: 0, finalUrl: u });
+      });
+      req.end();
+    };
+    start(url, 0);
+  });
+}
+
+/**
  * Download the WeGame installer into the local cache.
  *
- * Resolves with the local path to the downloaded file on success.
+ * v1.8.1: instead of hitting one hard-coded URL, this walks the ordered
+ * candidate list returned by `resolveDownloadUrlCandidates()`, HEAD-probing
+ * each one first and downloading from the first one that returns a usable
+ * 200 + reasonable content-length. If every candidate fails, a clear
+ * "all sources unavailable" error is returned so the UI can fall back to
+ * the "pick local file" flow.
  */
 export async function downloadWegameInstaller(
   config: EnvironmentConfig,
   onProgress?: (p: InstallerProgress) => void
-): Promise<{ success: boolean; cachedPath?: string; error?: string }> {
-  try {
-    const info = getInstallerInfo(config);
-    const url =
-      config.extra_env_vars?.WEGAME_INSTALLER_URL ||
-      DEFAULT_WEGAME_INSTALLER_URL;
+): Promise<{ success: boolean; cachedPath?: string; triedUrls?: string[]; error?: string }> {
+  const info = getInstallerInfo(config);
+  const candidates = info.downloadUrlCandidates;
+  const triedUrls: string[] = [];
 
+  onProgress?.({
+    phase: "download",
+    percent: 0,
+    message: `准备在 ${candidates.length} 个候选下载源中尝试...`,
+  });
+
+  for (let i = 0; i < candidates.length; i++) {
+    const url = candidates[i];
+    triedUrls.push(url);
     onProgress?.({
       phase: "download",
       percent: 0,
-      message: `开始下载 WeGame 安装器 (${url})`,
+      message: `[${i + 1}/${candidates.length}] 探测下载源：${url}`,
     });
-    log.info(`[wegame-install] downloading installer from ${url}`);
+    log.info(`[wegame-install] probing candidate ${i + 1}/${candidates.length}: ${url}`);
 
-    await downloadToFile(url, info.cachedPath, (p) => {
-      // 0-95% for download, leave headroom for the launch step
-      const mapped = Math.min(95, Math.round(p.percent * 0.95));
+    const probe = await probeUrl(url);
+    if (!probe.ok) {
+      log.warn(
+        `[wegame-install] candidate ${url} unavailable (status=${probe.statusCode}, length=${probe.contentLength})`
+      );
       onProgress?.({
         phase: "download",
-        percent: mapped,
-        message: `下载中 ${p.percent}% (${Math.round(p.downloaded / 1024 / 1024)}MB / ${Math.round(p.total / 1024 / 1024)}MB)`,
+        percent: 0,
+        message: `该源不可用（HTTP ${probe.statusCode || "error"}），尝试下一个...`,
       });
-    });
+      continue;
+    }
 
-    onProgress?.({
-      phase: "download",
-      percent: 100,
-      message: `安装器已下载到 ${info.cachedPath}`,
-    });
-    log.info(`[wegame-install] installer cached: ${info.cachedPath}`);
-    return { success: true, cachedPath: info.cachedPath };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error(`[wegame-install] download failed: ${msg}`);
-    onProgress?.({
-      phase: "error",
-      percent: 0,
-      message: `下载失败：${msg}`,
-      error: msg,
-    });
-    return { success: false, error: msg };
+    // Candidate looks good — commit to downloading from it.
+    try {
+      onProgress?.({
+        phase: "download",
+        percent: 0,
+        message: `开始下载 WeGame 安装器（${url}）`,
+      });
+      log.info(`[wegame-install] downloading from ${url}`);
+
+      await downloadToFile(url, info.cachedPath, (p) => {
+        const mapped = Math.min(95, Math.round(p.percent * 0.95));
+        onProgress?.({
+          phase: "download",
+          percent: mapped,
+          message: `下载中 ${p.percent}% (${Math.round(p.downloaded / 1024 / 1024)}MB / ${Math.round(p.total / 1024 / 1024)}MB)`,
+        });
+      });
+
+      onProgress?.({
+        phase: "download",
+        percent: 100,
+        message: `安装器已下载到 ${info.cachedPath}`,
+      });
+      log.info(`[wegame-install] installer cached: ${info.cachedPath}`);
+      return { success: true, cachedPath: info.cachedPath, triedUrls };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`[wegame-install] download from ${url} failed: ${msg}`);
+      // delete any partial file so the next candidate starts clean
+      try {
+        if (fs.existsSync(info.cachedPath)) fs.unlinkSync(info.cachedPath);
+      } catch {
+        /* noop */
+      }
+      onProgress?.({
+        phase: "download",
+        percent: 0,
+        message: `该源下载失败（${msg}），尝试下一个...`,
+      });
+      // continue to next candidate
+    }
   }
+
+  const summary =
+    `所有 ${candidates.length} 个候选下载源均不可用。` +
+    `腾讯已不再提供稳定的 WeGame 安装器静态直链，建议改为手动下载：` +
+    `打开 ${OFFICIAL_DOWNLOAD_PAGE_URL} 下载 WeGameSetup.exe 后，` +
+    `点击页面上的「选择本地安装器文件」按钮导入。`;
+  log.error(`[wegame-install] all sources failed: ${triedUrls.join(", ")}`);
+  onProgress?.({
+    phase: "error",
+    percent: 0,
+    message: summary,
+    error: summary,
+  });
+  return { success: false, triedUrls, error: summary };
 }
 
 /**
@@ -409,6 +564,81 @@ export async function downloadAndInstallWegame(
   }
 
   return await runWegameInstaller(installerPath, config, onProgress);
+}
+
+/**
+ * Install WeGame from a user-supplied local .exe file (PRD v1.8.1 §4.2.2 new).
+ *
+ * The file is copied into the installer cache directory (if it's not already
+ * there) so subsequent reinstalls don't rely on the user's original path
+ * being stable. Validation is minimal on purpose — we check the file exists,
+ * is non-empty, ends with .exe (case-insensitive); deeper content checks are
+ * left to the Wine installer itself (it will loudly fail if the file is not
+ * a real PE binary).
+ */
+export async function installWegameFromLocalFile(
+  localPath: string,
+  config: EnvironmentConfig,
+  onProgress?: (p: InstallerProgress) => void
+): Promise<{ success: boolean; exePath?: string; error?: string }> {
+  try {
+    const abs = expandPath(localPath);
+    if (!abs || !fs.existsSync(abs)) {
+      const msg = `选中的文件不存在：${abs || localPath}`;
+      onProgress?.({ phase: "error", percent: 0, message: msg, error: msg });
+      return { success: false, error: msg };
+    }
+    const st = fs.statSync(abs);
+    if (!st.isFile()) {
+      const msg = `所选路径不是文件：${abs}`;
+      onProgress?.({ phase: "error", percent: 0, message: msg, error: msg });
+      return { success: false, error: msg };
+    }
+    if (st.size < 1_000_000) {
+      const msg = `文件过小（${st.size} 字节），可能不是完整的 WeGame 安装器。请重新下载。`;
+      onProgress?.({ phase: "error", percent: 0, message: msg, error: msg });
+      return { success: false, error: msg };
+    }
+    if (!/\.exe$/i.test(abs)) {
+      const msg = `文件扩展名不是 .exe：${abs}`;
+      onProgress?.({ phase: "error", percent: 0, message: msg, error: msg });
+      return { success: false, error: msg };
+    }
+
+    // Copy into cache so future reinstalls don't need the user to re-browse.
+    const info = getInstallerInfo(config);
+    const dir = path.dirname(info.cachedPath);
+    fs.mkdirSync(dir, { recursive: true });
+    let installerPath = abs;
+    try {
+      if (path.resolve(abs) !== path.resolve(info.cachedPath)) {
+        onProgress?.({
+          phase: "download",
+          percent: 50,
+          message: `正在将安装器复制到缓存目录 (${Math.round(st.size / 1024 / 1024)}MB)...`,
+        });
+        fs.copyFileSync(abs, info.cachedPath);
+        installerPath = info.cachedPath;
+        log.info(`[wegame-install] copied local installer -> ${info.cachedPath}`);
+      }
+      onProgress?.({
+        phase: "download",
+        percent: 100,
+        message: `安装器就绪：${installerPath}`,
+      });
+    } catch (err) {
+      // Copy is a nice-to-have; if it fails we can still run directly from abs.
+      log.warn(`[wegame-install] copy-to-cache failed, will run from original path: ${(err as Error).message}`);
+      installerPath = abs;
+    }
+
+    return await runWegameInstaller(installerPath, config, onProgress);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error(`[wegame-install] installFromLocalFile failed: ${msg}`);
+    onProgress?.({ phase: "error", percent: 0, message: msg, error: msg });
+    return { success: false, error: msg };
+  }
 }
 
 /**

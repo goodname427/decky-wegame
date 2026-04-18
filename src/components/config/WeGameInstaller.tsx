@@ -4,6 +4,8 @@ import {
   Check,
   CheckCircle2,
   Download,
+  ExternalLink,
+  FolderOpen,
   Loader2,
   Package,
   RefreshCw,
@@ -14,9 +16,13 @@ import {
   checkWegameInstalled,
   clearWegameInstallerCache,
   installWegame as apiInstallWegame,
+  installWegameFromLocal as apiInstallWegameFromLocal,
+  pickWegameInstaller,
   listen,
 } from "../../utils/api";
 import type { EnvironmentConfig } from "../../types";
+
+const OFFICIAL_DOWNLOAD_PAGE = "https://www.wegame.com.cn/";
 
 export type WeGameInstallerVariant = "wizard" | "manage";
 export type WeGameInstallPhase = "idle" | "download" | "install" | "done" | "error";
@@ -142,6 +148,55 @@ export default function WeGameInstaller({
     await handleInstall(true);
   }
 
+  /**
+   * v1.8.1 primary path: let the user pick a locally-downloaded .exe. This
+   * avoids depending on any hard-coded Tencent CDN URL (all of which were
+   * 404 at the time v1.8.1 shipped). The file is copied into the cache so
+   * subsequent reinstalls don't need the user to browse again.
+   */
+  async function handleInstallFromLocal() {
+    if (!config) return;
+    try {
+      const pick = (await pickWegameInstaller()) as { canceled: boolean; filePath?: string };
+      if (pick.canceled || !pick.filePath) return;
+      setInstalling(true);
+      setError(null);
+      setMessage(`已选择：${pick.filePath}`);
+      setPhase("download"); // "preparing" — the shared ProgressBar labels still make sense
+      setPercent(0);
+      const res = (await apiInstallWegameFromLocal(config, pick.filePath)) as {
+        success: boolean;
+        exePath?: string;
+        error?: string;
+      };
+      if (res.success) {
+        setInstalled(true);
+        setExePath(res.exePath ?? null);
+        setPhase("done");
+        setPercent(100);
+        setMessage(res.exePath ? `WeGame 已安装到：${res.exePath}` : "WeGame 已安装");
+        onStatusChange?.({ installed: true, exePath: res.exePath ?? null });
+        onInstalled?.();
+      } else {
+        setError(res.error || "从本地文件安装失败");
+        setPhase("error");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      setPhase("error");
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  function openOfficialPage() {
+    // window.open in Electron renderer opens the URL in the OS browser by
+    // default (BrowserWindow doesn't handle http externally without a
+    // shell.openExternal wrapper — but window.open works for https).
+    window.open(OFFICIAL_DOWNLOAD_PAGE, "_blank", "noopener,noreferrer");
+  }
+
   if (!config) return null;
 
   // ===== Wizard variant: big, centered, with heading =====
@@ -176,14 +231,24 @@ export default function WeGameInstaller({
                 <p className="mt-2 text-xs text-gray-400">
                   您可以直接点击右下角「完成」结束向导，之后在「启动器」页启动 WeGame。
                 </p>
-                <div className="mt-3">
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={handleInstallFromLocal}
+                    disabled={installing}
+                    className="neon-secondary flex items-center gap-1.5 text-xs disabled:opacity-30"
+                    title="选择新的本地 WeGameSetup.exe 覆盖安装"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                    用本地文件重新安装
+                  </button>
                   <button
                     onClick={handleReinstall}
                     disabled={installing}
-                    className="neon-secondary flex items-center gap-1.5 text-xs disabled:opacity-30"
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1.5 disabled:opacity-30"
+                    title="实验性：依次尝试已知候选源"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
-                    重新下载并安装（如需覆盖/升级）
+                    在线重新下载（实验）
                   </button>
                 </div>
               </div>
@@ -198,23 +263,40 @@ export default function WeGameInstaller({
               <div className="flex-1">
                 <h4 className="font-semibold text-neon-yellow">尚未安装 WeGame</h4>
                 <p className="mt-1 text-sm text-gray-300">
-                  点击下方按钮，我们会自动下载腾讯官方 WeGame 安装程序，并在您配置好的 Wine 环境里运行它。
+                  腾讯已不再提供稳定的 WeGame 安装器直链。推荐在浏览器里从官方站点下载 <code className="text-gray-300">WeGameSetup.exe</code>，再点下方「选择本地安装器文件」导入。
                 </p>
                 <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs text-gray-400">
                   <li>安装器会以图形界面弹出，请在里面完成"下一步/同意/安装"等常规步骤</li>
-                  <li>安装器完成后，我们会自动校验 WeGameLauncher.exe 是否就位</li>
-                  <li>下载到本地缓存（<code className="text-gray-300">~/.cache/decky-wegame/installers</code>），下次重装可跳过下载</li>
+                  <li>安装器运行完毕后，我们会自动校验 WeGameLauncher.exe 是否就位</li>
+                  <li>选中的安装器会复制到缓存 <code className="text-gray-300">~/.cache/decky-wegame/installers</code>，下次重装无需再次选择</li>
                 </ul>
               </div>
             </div>
-            <div className="mt-4 flex justify-center">
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <button
+                onClick={handleInstallFromLocal}
+                disabled={installing}
+                className="neon-primary text-base px-6 py-3 flex items-center gap-2"
+              >
+                <FolderOpen className="h-4 w-4" />
+                选择本地安装器文件
+              </button>
+              <button
+                onClick={openOfficialPage}
+                className="neon-secondary px-4 py-3 flex items-center gap-1.5 text-sm"
+                title="在浏览器中打开 WeGame 官方下载页"
+              >
+                <ExternalLink className="h-4 w-4" />
+                打开官网下载页
+              </button>
               <button
                 onClick={() => handleInstall(false)}
                 disabled={installing}
-                className="neon-primary text-base px-8 py-3 flex items-center gap-2"
+                className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1.5"
+                title="实验性：依次尝试已知候选源下载（当前腾讯 CDN 已失效，可能全部失败）"
               >
                 <Download className="h-4 w-4" />
-                下载并安装 WeGame
+                在线下载（实验）
               </button>
             </div>
           </div>
@@ -253,19 +335,38 @@ export default function WeGameInstaller({
               <div className="flex-1">
                 <h4 className="font-semibold text-red-300">安装失败</h4>
                 <p className="mt-1 break-words text-sm text-gray-300">{error}</p>
+                <p className="mt-2 text-xs text-gray-400">
+                  建议改用「选择本地安装器文件」：先在浏览器里从官方站点下载 WeGameSetup.exe，再把它导入。
+                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={handleInstallFromLocal}
+                    disabled={installing}
+                    className="neon-primary flex items-center gap-1.5 text-sm disabled:opacity-30"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    选择本地安装器文件
+                  </button>
+                  <button
+                    onClick={openOfficialPage}
+                    className="neon-secondary flex items-center gap-1.5 text-sm"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    打开官网下载页
+                  </button>
                   <button
                     onClick={() => handleInstall(false)}
                     disabled={installing}
-                    className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-30"
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1.5 disabled:opacity-30"
+                    title="再次尝试所有已知候选下载源"
                   >
                     <RefreshCw className="h-4 w-4" />
-                    重试
+                    重试在线下载
                   </button>
                   <button
                     onClick={handleReinstall}
                     disabled={installing}
-                    className="neon-secondary flex items-center gap-1.5 text-sm disabled:opacity-30"
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1.5 disabled:opacity-30"
                   >
                     <Download className="h-4 w-4" />
                     清缓存并重新下载
@@ -288,9 +389,9 @@ export default function WeGameInstaller({
 
         {!installing && (
           <div className="rounded-lg border border-white/5 bg-white/5 p-3 text-xs text-gray-400">
-            📦 也可以选择跳过此步：如果您已手动把 WeGame 文件放在 Wine 前缀下的{" "}
+            📦 如果您已手动把 WeGame 文件放在 Wine 前缀下的{" "}
             <code className="text-gray-300">drive_c/Program Files/Tencent/WeGame/</code>，
-            直接点击右下角「完成」即可。
+            也可以直接点击右下角「完成」跳过本步。
           </div>
         )}
       </div>
@@ -381,31 +482,60 @@ export default function WeGameInstaller({
       {!installing && (
         <div className="flex flex-wrap gap-2">
           {installed === false && (
-            <button
-              onClick={() => handleInstall(false)}
-              className="neon-primary flex items-center gap-1.5 text-sm"
-            >
-              <Download className="h-3.5 w-3.5" />
-              下载并安装 WeGame
-            </button>
+            <>
+              <button
+                onClick={handleInstallFromLocal}
+                className="neon-primary flex items-center gap-1.5 text-sm"
+                title="选择已在浏览器中下载好的 WeGameSetup.exe"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                选择本地安装器文件
+              </button>
+              <button
+                onClick={openOfficialPage}
+                className="neon-secondary flex items-center gap-1.5 text-sm"
+                title="在浏览器中打开 WeGame 官方下载页"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                打开官网
+              </button>
+              <button
+                onClick={() => handleInstall(false)}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1.5"
+                title="实验性：依次尝试已知候选源下载（当前腾讯 CDN 已失效，可能全部失败）"
+              >
+                <Download className="h-3.5 w-3.5" />
+                在线下载（实验）
+              </button>
+            </>
           )}
           {installed === true && (
-            <button
-              onClick={handleReinstall}
-              className="neon-secondary flex items-center gap-1.5 text-sm"
-              title="清缓存并重新下载安装器"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              重新安装 WeGame
-            </button>
+            <>
+              <button
+                onClick={handleInstallFromLocal}
+                className="neon-secondary flex items-center gap-1.5 text-sm"
+                title="选择新的本地 WeGameSetup.exe 重新安装"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                用本地文件重装
+              </button>
+              <button
+                onClick={handleReinstall}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1.5"
+                title="清缓存并从候选源下载"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                清缓存并在线重装
+              </button>
+            </>
           )}
           {phase === "error" && (
             <button
-              onClick={() => handleInstall(false)}
-              className="neon-secondary flex items-center gap-1.5 text-sm"
+              onClick={handleInstallFromLocal}
+              className="neon-primary flex items-center gap-1.5 text-sm"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-              重试
+              <FolderOpen className="h-3.5 w-3.5" />
+              改用本地文件
             </button>
           )}
         </div>

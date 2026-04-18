@@ -1,4 +1,4 @@
-import { IpcMain, BrowserWindow } from "electron";
+import { IpcMain, BrowserWindow, dialog } from "electron";
 import { loadConfig, saveConfig } from "./backend/config";
 import { createPrefix, deletePrefix, prefixExists, getPrefixSizeMb, getPrefixPath } from "./backend/environment";
 import { scanProtonVersions, validateProtonPath, checkWinetricksAvailable, checkWineAvailable } from "./backend/proton";
@@ -25,6 +25,7 @@ import {
   getInstallerInfo,
   isWegameInstalled,
   clearInstallerCache,
+  installWegameFromLocalFile,
 } from "./backend/wegame_installer";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import { cleanupAllLogs } from "./backend/logger";
@@ -315,6 +316,38 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   ipcMain.handle("clear_wegame_installer_cache", async (_event, args?: { config?: EnvironmentConfig }) => {
     return clearInstallerCache(args?.config);
   });
+
+  // v1.8.1: let the user pick a locally-downloaded WeGame installer .exe.
+  // Returns { canceled: boolean; filePath?: string }. The file dialog is
+  // modal to the currently-active window so it works both in wizard and
+  // dependencies-page flows.
+  ipcMain.handle("pick_wegame_installer", async () => {
+    const win = getMainWindow();
+    const result = await dialog.showOpenDialog(win ?? undefined!, {
+      title: "选择已下载的 WeGame 安装程序",
+      properties: ["openFile"],
+      filters: [
+        { name: "WeGame 安装器 (*.exe)", extensions: ["exe"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    });
+    if (result.canceled || !result.filePaths[0]) {
+      return { canceled: true };
+    }
+    return { canceled: false, filePath: result.filePaths[0] };
+  });
+
+  // v1.8.1: run a user-supplied local installer .exe inside the prefix.
+  // Mirrors install_wegame's event contract (emits on "wegame-install-progress").
+  ipcMain.handle(
+    "install_wegame_from_local",
+    async (_event, args: { config: EnvironmentConfig; localPath: string }) => {
+      const win = getMainWindow();
+      return await installWegameFromLocalFile(args.localPath, args.config, (p) => {
+        win?.webContents.send("wegame-install-progress", p);
+      });
+    }
+  );
 
   // Update check
   ipcMain.handle("check_for_update", async (_event, args: { channel: string }) => {
