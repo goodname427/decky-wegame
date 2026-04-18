@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke, listen } from "../utils/api";
 import {
   RefreshCw,
@@ -8,10 +8,7 @@ import {
   Loader2,
   AlertTriangle,
   Wand2,
-  FolderOpen,
-  Trash2,
   Layers,
-  Plus,
   ExternalLink,
   Copy,
   Check,
@@ -22,7 +19,9 @@ import ProgressBar from "../components/ProgressBar";
 import LogViewer from "../components/LogViewer";
 import ConfirmDialog from "../components/ConfirmDialog";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
-import { useEnvironment, useProtonVersions } from "../hooks/useEnvironment";
+import PathsSection from "../components/config/PathsSection";
+import ProtonPicker from "../components/config/ProtonPicker";
+import { useEnvironment } from "../hooks/useEnvironment";
 import { useInstallProgress } from "../hooks/useInstallProgress";
 import { DEPENDENCY_LIST } from "../utils/constants";
 import type {
@@ -31,7 +30,6 @@ import type {
   DependencyScanResult,
   ScannedPath,
   MiddlewareDownloadProgress,
-  ProtonInfo,
 } from "../types";
 
 const CATEGORY_LABELS: Record<DependencyCategory, string> = {
@@ -54,7 +52,7 @@ interface DependenciesProps {
 }
 
 export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
-  const { config, saveEnvironment, refetch: refetchConfig } = useEnvironment();
+  const { config, saveEnvironment } = useEnvironment();
   const { progress, logs } = useInstallProgress();
   // PRD v1.5 §4.2.2.3: render placeholder (installed=false) immediately so the
   // page is interactive in <50ms even on a cold first visit. The real
@@ -175,11 +173,11 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
         </div>
       </div>
 
-      {/* Middleware Management */}
-      <MiddlewareManager config={config} saveEnvironment={saveEnvironment} refetchConfig={refetchConfig} />
+      {/* Middleware Management (Wine / winetricks / Proton) */}
+      <MiddlewareManager config={config} saveEnvironment={saveEnvironment} />
 
-      {/* Custom paths */}
-      <CustomPaths config={config} saveEnvironment={saveEnvironment} />
+      {/* Custom paths (Wine prefix + WeGame install dir) */}
+      <PathsSection config={config} saveEnvironment={saveEnvironment} variant="panel" />
 
       {/* Winetricks dependencies */}
       <div className="glass-card p-5 space-y-3">
@@ -350,16 +348,13 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
 interface MiddlewareManagerProps {
   config: ReturnType<typeof useEnvironment>["config"];
   saveEnvironment: ReturnType<typeof useEnvironment>["saveEnvironment"];
-  refetchConfig: ReturnType<typeof useEnvironment>["refetch"];
 }
 
-function MiddlewareManager({ config, saveEnvironment, refetchConfig }: MiddlewareManagerProps) {
-  const { versions: protonVersions, refetch: refetchProton } = useProtonVersions();
+function MiddlewareManager({ config, saveEnvironment }: MiddlewareManagerProps) {
   const [scanResults, setScanResults] = useState<DependencyScanResult[]>([]);
   const [scanning, setScanning] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<MiddlewareDownloadProgress | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ProtonInfo | null>(null);
   const [customPaths, setCustomPaths] = useState<{ wine: string; winetricks: string }>({ wine: "", winetricks: "" });
   const [customPathStatus, setCustomPathStatus] = useState<Record<string, "idle" | "ok" | "fail">>({});
 
@@ -378,6 +373,8 @@ function MiddlewareManager({ config, saveEnvironment, refetchConfig }: Middlewar
   useEffect(() => { rescan(); }, [rescan]);
 
   useEffect(() => {
+    // Track winetricks download events only — Proton download progress is
+    // handled internally by <ProtonPicker>.
     const unsub = listen<MiddlewareDownloadProgress>("middleware-download-progress", (p) => {
       setDownloadProgress(p);
       if (p.phase === "done") {
@@ -386,24 +383,6 @@ function MiddlewareManager({ config, saveEnvironment, refetchConfig }: Middlewar
     });
     return () => { unsub(); };
   }, []);
-
-  async function handleSelectProton(p: ProtonInfo) {
-    await saveEnvironment({ ...config, proton_path: p.path });
-  }
-
-  async function handleDownloadGeProton() {
-    setDownloading(true);
-    setDownloadProgress({ phase: "download", percent: 0, message: "开始下载..." });
-    try {
-      const result = await invoke<{ success: boolean; version?: string; error?: string }>("download_ge_proton");
-      if (!result.success) {
-        setDownloadProgress({ phase: "done", percent: 100, message: `下载失败: ${result.error}` });
-      }
-      await refetchProton();
-    } catch (e) {
-      setDownloadProgress({ phase: "done", percent: 100, message: `下载失败: ${(e as Error).message}` });
-    }
-  }
 
   async function handleInstallWinetricks() {
     setDownloading(true);
@@ -421,21 +400,6 @@ function MiddlewareManager({ config, saveEnvironment, refetchConfig }: Middlewar
     } finally {
       setTimeout(() => { setDownloading(false); setDownloadProgress(null); }, 1500);
     }
-  }
-
-  async function handleDeleteProton(p: ProtonInfo) {
-    const res = await invoke<{ success: boolean; error?: string }>("delete_proton_version", { path: p.path });
-    if (res.success) {
-      // If deleted one was in use, clear it
-      if (config.proton_path === p.path) {
-        await saveEnvironment({ ...config, proton_path: "" });
-      }
-      await refetchProton();
-      await refetchConfig();
-    } else {
-      alert(`删除失败: ${res.error}`);
-    }
-    setDeleteTarget(null);
   }
 
   async function handleValidateCustomPath(depId: "wine" | "winetricks") {
@@ -492,64 +456,13 @@ function MiddlewareManager({ config, saveEnvironment, refetchConfig }: Middlewar
         </div>
       )}
 
-      {/* Proton section */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium text-gray-200">Proton 兼容层</h4>
-          <button
-            onClick={handleDownloadGeProton}
-            disabled={downloading}
-            className="text-xs text-primary hover:text-primary-light flex items-center gap-1 disabled:opacity-50"
-          >
-            <Plus className="h-3 w-3" />
-            下载最新 GE-Proton
-          </button>
-        </div>
-        {protonVersions.length === 0 ? (
-          <p className="text-xs text-gray-500">未扫描到 Proton 版本，可点击右上角下载最新 GE-Proton。</p>
-        ) : (
-          <div className="space-y-1.5">
-            {protonVersions.map((p) => {
-              const selected = config.proton_path === p.path;
-              const isUserOwned =
-                p.path.includes("/.steam/root/compatibilitytools.d/") ||
-                p.path.includes("/.local/share/Steam/compatibilitytools.d/");
-              return (
-                <div
-                  key={p.path}
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2 border ${
-                    selected ? "border-primary/40 bg-primary/5" : "border-white/5 bg-surface-light/30"
-                  }`}
-                >
-                  <button onClick={() => handleSelectProton(p)} className="flex-1 min-w-0 text-left">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-200 truncate">{p.name}</span>
-                      {p.is_recommended && (
-                        <span className="shrink-0 rounded bg-neon-green/10 px-1.5 py-px text-[10px] text-neon-green">推荐</span>
-                      )}
-                      {selected && (
-                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-px text-[10px] text-primary flex items-center gap-0.5">
-                          <Check className="h-2.5 w-2.5" /> 使用中
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 truncate text-[11px] text-gray-500 font-mono">{p.path}</p>
-                  </button>
-                  {isUserOwned && (
-                    <button
-                      onClick={() => setDeleteTarget(p)}
-                      className="p-1.5 text-gray-500 hover:text-neon-red"
-                      title="删除该 Proton 版本"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {/* Proton section (shared) */}
+      <ProtonPicker
+        config={config}
+        saveEnvironment={saveEnvironment}
+        variant="panel"
+        hideHeader={false}
+      />
 
       {/* Wine section */}
       <MiddlewareBlock
@@ -601,17 +514,6 @@ function MiddlewareManager({ config, saveEnvironment, refetchConfig }: Middlewar
             </a>
           </>
         }
-      />
-
-      {/* Delete confirm */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="删除 Proton 版本"
-        message={`确认删除 ${deleteTarget?.name}？\n路径：${deleteTarget?.path}\n\n此操作不可撤销。`}
-        confirmText="确认删除"
-        danger
-        onConfirm={() => deleteTarget && handleDeleteProton(deleteTarget)}
-        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );
@@ -681,102 +583,8 @@ function MiddlewareBlock({ title, scan, customPath, customPathStatus, onCustomPa
 }
 
 // ---------- Custom Paths (Wine Prefix / WeGame install dir) ----------
-
-interface CustomPathsProps {
-  config: ReturnType<typeof useEnvironment>["config"];
-  saveEnvironment: ReturnType<typeof useEnvironment>["saveEnvironment"];
-}
-
-function CustomPaths({ config, saveEnvironment }: CustomPathsProps) {
-  const [prefixPath, setPrefixPath] = useState(config.wine_prefix_path);
-  const [wegamePath, setWegamePath] = useState(config.wegame_install_path);
-  const [saved, setSaved] = useState(false);
-  const [showPrefixWarn, setShowPrefixWarn] = useState<string | null>(null);
-
-  // Sync when config updates externally
-  const lastConfigSig = useRef("");
-  const sig = `${config.wine_prefix_path}|${config.wegame_install_path}`;
-  if (lastConfigSig.current !== sig) {
-    lastConfigSig.current = sig;
-    if (config.wine_prefix_path !== prefixPath) setPrefixPath(config.wine_prefix_path);
-    if (config.wegame_install_path !== wegamePath) setWegamePath(config.wegame_install_path);
-  }
-
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      if (prefixPath === config.wine_prefix_path && wegamePath === config.wegame_install_path) return;
-      try {
-        await saveEnvironment({ ...config, wine_prefix_path: prefixPath, wegame_install_path: wegamePath });
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      } catch (e) { console.error("save custom path failed:", e); }
-    }, 500);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefixPath, wegamePath]);
-
-  function handlePrefixChange(v: string) {
-    if (v !== config.wine_prefix_path && config.wine_prefix_path) {
-      setShowPrefixWarn(v);
-      return;
-    }
-    setPrefixPath(v);
-  }
-
-  return (
-    <div className="glass-card p-5 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-base font-semibold text-gray-100">
-          <FolderOpen className="h-4.5 w-4.5 text-primary" />
-          自定义安装路径
-        </h3>
-        {saved && (
-          <span className="text-xs text-neon-green flex items-center gap-1 animate-fade-in">
-            <CheckCircle2 className="h-3 w-3" /> 已保存
-          </span>
-        )}
-      </div>
-
-      <div>
-        <label className="mb-1 block text-sm text-gray-300">Wine 前缀路径</label>
-        <input
-          type="text"
-          value={prefixPath}
-          onChange={(e) => handlePrefixChange(e.target.value)}
-          placeholder="~/.local/share/decky-wegame/prefix"
-          className="input-field font-mono text-sm"
-        />
-        <p className="mt-1 text-xs text-gray-500">WeGame 的 Wine 兼容环境存储目录（修改后旧目录不会自动迁移）</p>
-      </div>
-
-      <div>
-        <label className="mb-1 block text-sm text-gray-300">WeGame 安装路径</label>
-        <input
-          type="text"
-          value={wegamePath}
-          onChange={(e) => setWegamePath(e.target.value)}
-          placeholder="Wine 前缀内的 WeGame 安装目录"
-          className="input-field font-mono text-sm"
-        />
-        <p className="mt-1 text-xs text-gray-500">通常自动检测，仅在异常情况需要修改</p>
-      </div>
-
-      <ConfirmDialog
-        open={!!showPrefixWarn}
-        title="修改 Wine 前缀路径"
-        message="修改前缀路径后，原前缀目录不会自动迁移到新路径；已安装的 WeGame、注册表、依赖组件将不再被使用。请确认已备份或知晓风险。"
-        confirmText="我已确认，修改"
-        onConfirm={() => {
-          if (showPrefixWarn !== null) setPrefixPath(showPrefixWarn);
-          setShowPrefixWarn(null);
-        }}
-        onCancel={() => setShowPrefixWarn(null)}
-      />
-    </div>
-  );
-}
+// NOTE: Moved to src/components/config/PathsSection.tsx to be shared with
+// SetupWizard. Keeping this file focused on middleware-specific UI.
 
 // ---------- Small UI helpers ----------
 
