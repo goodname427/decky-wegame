@@ -6,6 +6,53 @@
 
 ---
 
+## 2026-04-18 — 外部资源下载统一收口到 `downloadFromMirrorPool`（v1.11.0）
+
+### 背景
+v1.10.0 里 PRD §5.6 已经写清「外部资源下载策略」，但**代码层面还是散的**：实际扫描发现仅 `electron/backend/` 里就有 **4 处独立的 `downloadToFile` 实现 + 3 处独立的 `httpsGet`**，分布在 `middleware.ts / wegame_installer.ts / updater.ts / mirrors.ts`。其中 `middleware.ts` 的 GE-Proton 下载和 `installWinetricksUserlocal` 直接打 `github.com` / `raw.githubusercontent.com`，在国内环境下是本项目"下载全失败"的一个隐藏根因；`mirrors.ts` 里早期随手塞进去的 `dotnet46` mirror 指向的自仓库 Release 也已确认 `HTTP 404`。
+
+本次把所有 HTTP(S) 出站流量都收口到一个抽象下面，兑现 PRD §5.6.5 的硬约束。M2 里程碑完成。
+
+### 变更概览
+
+**新增 `electron/backend/mirror-manifest.json`**
+- `§5.6.1 / §5.6.2` 的真正 SSoT：`githubProxies.prefixes`（gh-proxy / ghproxy.net / ghproxy.homeboyc.cn / mirror.ghproxy + 原始 URL 兜底）、`pools`（`github-release` / `github-raw` / `github-api` 为 `github-prefix` 策略；`wegame-installer` 为 `static` 策略）、`winetricksVerbs`（`dotnet46` 保留占位但 `sources` 暂空，原自引用 Release 已 404，待实机验证到可用镜像再补）
+- 通过 tsconfig 的 `resolveJsonModule` 直接 `import`，编译期内联进 JS，运行时无需文件存在
+
+**重写 `electron/backend/mirrors.ts`**
+- 新 API：
+  - `downloadFromMirrorPool(poolId, candidates, opts)`：HEAD 探测（可关）→ 逐候选 `streamToFile` → 任一成功即返回；支持 `minBytes / sha256 / onProgress / userAgent`；全部以 discriminated union（`{ok:true, ...} | {ok:false, triedUrls, errors}`）返回，**永不抛异常**
+  - `httpGetJsonFromPool(poolId, candidates, opts)`：JSON 版本，支持 `acceptNotFound`（GitHub `releases/latest` 会用 404 表达"还没有发布"）
+  - `expandMirrorCandidates(poolId, rawUrl?, extra?)` + `ghMirrored(rawUrl)`
+- `preseedWinetricksCache` 公共签名不变，内部改为 `downloadFromMirrorPool` 的调用方
+- 新增 `Log.category('Mirror')` 专属日志类别，固定格式 `[Mirror] <poolId> trying [i/N] <url>` / `HEAD <status> <ms>ms` / `FAIL ... : <reason>` / `OK via <url> (<bytes>B, <ms>ms)`，一条 `grep` 就能答"这次下载究竟是哪个镜像成交的"
+
+**改造三处业务调用点**（保持对外签名完全一致）
+- `middleware.ts`：`fetchLatestGeProtonInfo` / `downloadAndInstallGeProton` / `installWinetricksUserlocal` 全部走 `mirrors.ts`；失败文案改为"尝试了 N 个镜像"+ 前 3 条错误摘要（符合 §1 P0 第 4 条"错误横幅必须给下一步操作"，不再抛英文 HTTP stack）
+- `wegame_installer.ts`：删除本地 `downloadToFile` / `probeUrl` / `DEFAULT_WEGAME_INSTALLER_URL_CANDIDATES` 常量（文件从 662 行缩到 487 行）；候选列表统一走 `expandMirrorCandidates("wegame-installer", undefined, [userOverride])`；用户 `WEGAME_INSTALLER_URL` 覆盖仍自动插到最前
+- `updater.ts`：所有 `api.github.com` 请求走 `httpGetJsonFromPool('github-api', ...)`；AppImage 下载走 `downloadFromMirrorPool('github-release', ...)`
+
+**版本号同步**（`package.json` `1.10.0 → 1.11.0`、`PRD.md` 顶部元信息、`README.md` 顶部版本号 + 功能特性段「多镜像池内置」条目顺手修正 v1.10.0 里的排版笔误）
+
+### 关键技术决策
+- **不抛异常的下载器**：多候选失败是预期路径而非错误路径，用异常会让业务侧 `try/catch` 包一层又一层；改成返回值里带 `triedUrls[]` + `errors[]` 让失败信息"在结构化数据里"便于向 UI 展示，同时满足 §1 P0 第 4 条"错误横幅必须给下一步操作"——UI 直接打印"尝试了 N 个镜像"而不是一条英文 stack
+- **manifest 用 JSON 而非 TS 常量**：未来可以热修（虽然目前是 `import`），同时天然禁止在清单里写逻辑；`tsconfig.resolveJsonModule` 让 JSON 既是数据源又是编译期资源，不需要额外打包配置
+- **MINOR 升版**：外部 API 签名没破坏性变化，但失败文案与日志类别对用户可见，且新增"多镜像自动降级"能力属于默认行为增强，按 §4 版本规则升 MINOR；**镜像 URL 的后续热修不升 MINOR**（§5.6.5）
+- **按 3 个 commit 拆分**：`mirrors` 基建 / `middleware` 改造 / `wegame_installer + updater` 改造 + 文档同步，每个 commit 独立可编译、可回滚；DEVLOG 仍然只写这一条汇总
+
+### 关键文件
+- 新增：`electron/backend/mirror-manifest.json`
+- 重写：`electron/backend/mirrors.ts`（+564 / -149）
+- 改造：`electron/backend/middleware.ts`、`electron/backend/wegame_installer.ts`（-175 行净削减）、`electron/backend/updater.ts`
+- 同步：`package.json` / `README.md` / `PRD.md`（仅顶部元信息）
+
+### 未完成 / 已知限制
+- `mirror-manifest.json` 里所有镜像 URL **未经实机验证**（PRD §8 Open Question 第 3 条），首次在 Steam Deck 上跑起来后若某个前缀确认不可达，直接改 manifest 即可，无需升 MINOR
+- `winetricksVerbs.dotnet46.sources` 暂空，依赖降级让 winetricks 走自己的原生 URL；待有确认可达的国内镜像后再补
+- `§5.6.4 镜像健康度检测` UI 仍为 P2，未在本 MINOR 落地
+
+---
+
 ## 2026-04-18 — 产品战略转向：一站式体验优先，确立 P0/P1 原则与外部资源下载 SSoT（v1.10.0）
 
 ### 背景

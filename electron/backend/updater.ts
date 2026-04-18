@@ -1,8 +1,11 @@
-import https from "https";
-import http from "http";
 import fs from "fs";
 import path from "path";
-import { execSync, spawn } from "child_process";
+import { execSync } from "child_process";
+import {
+  downloadFromMirrorPool,
+  httpGetJsonFromPool,
+  ghMirrored,
+} from "./mirrors";
 
 export type UpdateChannel = "stable" | "dev";
 
@@ -50,49 +53,24 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-function httpsGet(url: string, headers?: Record<string, string>): Promise<{ statusCode: number; data: string; headers: Record<string, string> }> {
-  return new Promise((resolve, reject) => {
-    const reqHeaders: Record<string, string> = {
+/**
+ * GET a GitHub JSON endpoint via the shared mirror pool so the self-updater
+ * works from inside the GFW without a user-configured proxy.
+ */
+async function githubApiGet(rawUrl: string): Promise<{ statusCode: number; data: unknown }> {
+  const res = await httpGetJsonFromPool("github-api", ghMirrored(rawUrl), {
+    headers: {
+      Accept: "application/vnd.github.v3+json",
       "User-Agent": "WeGame-Launcher-Updater",
-      ...headers,
-    };
-
-    const makeRequest = (requestUrl: string, redirectCount: number) => {
-      if (redirectCount > 5) {
-        reject(new Error("Too many redirects"));
-        return;
-      }
-
-      const parsedUrl = new URL(requestUrl);
-      const protocol = parsedUrl.protocol === "https:" ? https : http;
-
-      const req = protocol.get(requestUrl, { headers: reqHeaders }, (res) => {
-        // Handle redirects
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          makeRequest(res.headers.location, redirectCount + 1);
-          return;
-        }
-
-        let data = "";
-        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
-        res.on("end", () => {
-          resolve({
-            statusCode: res.statusCode || 0,
-            data,
-            headers: res.headers as Record<string, string>,
-          });
-        });
-      });
-
-      req.on("error", reject);
-      req.setTimeout(30000, () => {
-        req.destroy();
-        reject(new Error("Request timeout"));
-      });
-    };
-
-    makeRequest(url, 0);
+    },
+    acceptNotFound: true,
   });
+  if (!res.ok) {
+    throw new Error(
+      `GitHub API 所有镜像均失败（${res.triedUrls.length} 个源）：${res.errors.slice(0, 3).join("; ")}`
+    );
+  }
+  return { statusCode: res.status, data: res.data };
 }
 
 /**
@@ -103,11 +81,9 @@ async function checkStableUpdate(): Promise<UpdateInfo> {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 
   try {
-    const response = await httpsGet(url, {
-      Accept: "application/vnd.github.v3+json",
-    });
+    const response = await githubApiGet(url);
 
-    if (response.statusCode === 404) {
+    if (response.statusCode === 404 || !response.data) {
       // No releases yet
       return {
         has_update: false,
@@ -117,16 +93,18 @@ async function checkStableUpdate(): Promise<UpdateInfo> {
       };
     }
 
-    if (response.statusCode !== 200) {
-      throw new Error(`GitHub API returned status ${response.statusCode}`);
-    }
-
-    const release = JSON.parse(response.data);
+    const release = response.data as {
+      tag_name?: string;
+      body?: string;
+      published_at?: string;
+      html_url?: string;
+      assets?: { name: string; browser_download_url: string }[];
+    };
     const latestVersion = (release.tag_name || "").replace(/^v/, "");
 
     // Find AppImage asset
     const appImageAsset = (release.assets || []).find(
-      (a: { name: string }) => a.name.endsWith(".AppImage")
+      (a) => a.name.endsWith(".AppImage")
     );
 
     const hasUpdate = compareSemver(latestVersion, currentVersion) > 0;
@@ -156,15 +134,21 @@ async function checkDevUpdate(): Promise<UpdateInfo> {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs?status=success&per_page=1&branch=main`;
 
   try {
-    const response = await httpsGet(url, {
-      Accept: "application/vnd.github.v3+json",
-    });
+    const response = await githubApiGet(url);
 
-    if (response.statusCode !== 200) {
+    if (response.statusCode !== 200 || !response.data) {
       throw new Error(`GitHub API returned status ${response.statusCode}`);
     }
 
-    const data = JSON.parse(response.data);
+    const data = response.data as {
+      workflow_runs?: {
+        id: number;
+        head_sha?: string;
+        head_branch?: string;
+        head_commit?: { message?: string };
+        created_at?: string;
+      }[];
+    };
     const runs = data.workflow_runs || [];
 
     if (runs.length === 0) {
@@ -198,14 +182,15 @@ async function checkDevUpdate(): Promise<UpdateInfo> {
     let downloadUrl: string | undefined;
     let fileName: string | undefined;
     try {
-      const artifactsResponse = await httpsGet(
-        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}/artifacts`,
-        { Accept: "application/vnd.github.v3+json" }
+      const artifactsResponse = await githubApiGet(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}/artifacts`
       );
-      if (artifactsResponse.statusCode === 200) {
-        const artifactsData = JSON.parse(artifactsResponse.data);
+      if (artifactsResponse.statusCode === 200 && artifactsResponse.data) {
+        const artifactsData = artifactsResponse.data as {
+          artifacts?: { name: string }[];
+        };
         const appImageArtifact = (artifactsData.artifacts || []).find(
-          (a: { name: string }) => a.name.includes("AppImage")
+          (a) => a.name.includes("AppImage")
         );
         if (appImageArtifact) {
           // Note: Artifact downloads require authentication, so we provide the HTML URL
@@ -261,62 +246,30 @@ export async function downloadAndInstallUpdate(
 
   const filePath = path.join(downloadDir, fileName);
 
-  return new Promise((resolve, reject) => {
-    const makeRequest = (url: string, redirectCount: number) => {
-      if (redirectCount > 5) {
-        reject(new Error("Too many redirects"));
-        return;
-      }
+  const dl = await downloadFromMirrorPool(
+    "github-release",
+    ghMirrored(downloadUrl),
+    {
+      destPath: filePath,
+      // App self-update AppImage is tens of MB; reject tiny proxy error pages.
+      minBytes: 10_000_000,
+      timeoutMs: 10 * 60_000,
+      userAgent: "WeGame-Launcher-Updater",
+      onProgress,
+    }
+  );
 
-      const parsedUrl = new URL(url);
-      const protocol = parsedUrl.protocol === "https:" ? https : http;
+  if (!dl.ok) {
+    throw new Error(
+      `应用更新下载失败（${dl.triedUrls.length} 个镜像均不可用）：${dl.errors.slice(0, 3).join("; ")}`
+    );
+  }
 
-      protocol.get(url, {
-        headers: { "User-Agent": "WeGame-Launcher-Updater" },
-      }, (res) => {
-        // Handle redirects
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          makeRequest(res.headers.location, redirectCount + 1);
-          return;
-        }
-
-        if (res.statusCode !== 200) {
-          reject(new Error(`Download failed with status ${res.statusCode}`));
-          return;
-        }
-
-        const totalSize = parseInt(res.headers["content-length"] || "0", 10);
-        let downloaded = 0;
-
-        const fileStream = fs.createWriteStream(filePath);
-
-        res.on("data", (chunk: Buffer) => {
-          downloaded += chunk.length;
-          if (onProgress && totalSize > 0) {
-            onProgress({
-              percent: Math.round((downloaded / totalSize) * 100),
-              downloaded,
-              total: totalSize,
-            });
-          }
-        });
-
-        res.pipe(fileStream);
-
-        fileStream.on("finish", () => {
-          fileStream.close();
-          // Make executable
-          fs.chmodSync(filePath, 0o755);
-          resolve(filePath);
-        });
-
-        fileStream.on("error", (err) => {
-          fs.unlinkSync(filePath);
-          reject(err);
-        });
-      }).on("error", reject);
-    };
-
-    makeRequest(downloadUrl, 0);
-  });
+  // Make executable
+  try {
+    fs.chmodSync(filePath, 0o755);
+  } catch {
+    // non-fatal on platforms that ignore chmod
+  }
+  return filePath;
 }
