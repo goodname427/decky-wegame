@@ -1,5 +1,5 @@
 /**
- * WeGame runtime diagnostics (PRD v1.4 §4.7).
+ * WeGame runtime diagnostics (§4.7).
  *
  * Goal: when a user reports "WeGame starts but installer sticks at 0%", give
  * them a structured, one-click report that identifies WHICH subsystem is

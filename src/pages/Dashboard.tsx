@@ -21,7 +21,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import useWegameStatus from "../hooks/useWegameStatus";
 import useEnvironment from "../hooks/useEnvironment";
 
-// PRD v1.6 §4.3.1: keep the hint text in sync with Launcher.tsx.
+// §4.3.1: keep the hint text in sync with Launcher.tsx.
 const LAUNCHER_LOG_HINT = "详细日志：~/.local/share/decky-wegame/logs/launcher.log";
 
 type BannerKind = "error" | "warning";
@@ -69,7 +69,7 @@ export default function Dashboard() {
   }
 
   async function handleLaunch() {
-    // PRD v1.6 §4.3.1: banner + probing (same behavior as Launcher page).
+  // §4.3.1: banner + probing (same behavior as Launcher page).
     setLaunching(true);
     setBanner(null);
     try {
@@ -129,7 +129,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {/* PRD v1.6 §4.3.1: actionable error / warning banner. */}
+      {/* §4.3.1: actionable error / warning banner. */}
       {banner && (
         <div
           className={

@@ -42,7 +42,7 @@ const CATEGORY_LABELS: Record<DependencyCategory, string> = {
   other: "其他组件",
 };
 
-// PRD v1.4: fallback 列表直接复用 constants.ts 中的 DEPENDENCY_LIST
+// fallback 列表直接复用 constants.ts 中的 DEPENDENCY_LIST
 // （单一事实来源，避免前端多处维护同一份依赖元数据导致的不一致）
 const ALL_DEPS = DEPENDENCY_LIST;
 
@@ -55,7 +55,7 @@ interface DependenciesProps {
 export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
   const { config, saveEnvironment } = useEnvironment();
   const { progress, logs } = useInstallProgress();
-  // PRD v1.5 §4.2.2.3: render placeholder (installed=false) immediately so the
+  // §4.2.2.3: render placeholder (installed=false) immediately so the
   // page is interactive in <50ms even on a cold first visit. The real
   // installed-state is fetched asynchronously and merged in when ready.
   const [deps, setDeps] = useState<DependencyItem[]>(ALL_DEPS.map((d) => ({ ...d, installed: false })));
@@ -180,7 +180,7 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
       {/* Custom paths (Wine prefix + WeGame install dir) */}
       <PathsSection config={config} saveEnvironment={saveEnvironment} variant="panel" />
 
-      {/* WeGame itself (install / reinstall) — PRD v1.8 §4.2.2 */}
+      {/* WeGame itself (install / reinstall) — §4.2.2 */}
       <WeGameInstaller config={config} variant="manage" />
 
       {/* Winetricks dependencies */}
@@ -267,7 +267,7 @@ export default function Dependencies({ onOpenSetupWizard }: DependenciesProps) {
                       <p className="mt-0.5 truncate text-xs text-gray-500">{dep.description}</p>
                     </div>
                     <span className="shrink-0 tabular-nums text-xs text-gray-600">{dep.size_mb.toFixed(0)} MB</span>
-                    {/* PRD v1.8: single-item reinstall. Visible only on hover
+                    {/* Single-item reinstall (§4.2.2). Visible only on hover
                         for installed deps so it doesn't clutter the list. */}
                     {dep.installed && progress.status !== "running" && (
                       <button

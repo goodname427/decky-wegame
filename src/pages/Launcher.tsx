@@ -18,7 +18,7 @@ import useWegameStatus from "../hooks/useWegameStatus";
 import useEnvironment from "../hooks/useEnvironment";
 import type { GameEntry } from "../types";
 
-// PRD v1.6 §4.3.1: launcher.log path hint shown in error banners so users
+// §4.3.1: launcher.log path hint shown in error banners so users
 // know exactly where to look when a launch fails.
 const LAUNCHER_LOG_HINT = "详细日志：~/.local/share/decky-wegame/logs/launcher.log";
 
@@ -63,7 +63,7 @@ export default function Launcher() {
   }
 
   async function handleLaunchWeGame() {
-    // PRD v1.6 §4.3.1: immediate UI feedback + post-launch probing.
+  // §4.3.1: immediate UI feedback + post-launch probing.
     setLaunchBusy(true);
     setBanner(null);
     try {
@@ -166,7 +166,7 @@ export default function Launcher() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      {/* PRD v1.6 §4.3.1: error / warning banner with actionable hint. */}
+      {/* §4.3.1: error / warning banner with actionable hint. */}
       {banner && (
         <div
           className={

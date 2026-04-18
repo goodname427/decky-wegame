@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Routes, Route } from "react-router-dom";
+import { useNavigate, Routes, Route } from "react-router-dom";
 import Sidebar from "./components/Sidebar";
 import HeaderBar from "./components/HeaderBar";
 import Dashboard from "./pages/Dashboard";
@@ -9,23 +9,36 @@ import SettingsPage from "./pages/SettingsPage";
 import About from "./pages/About";
 import { invoke } from "./utils/api";
 
+type WizardInitialMode = "welcome" | "advanced";
+
+interface WizardState {
+  open: boolean;
+  /** Which screen the wizard should show first on open. "welcome" is the
+   *  first-run default (§4.1.0); "advanced" is the escape-hatch entry used
+   *  by the Dependencies page "重新配置环境" button (§4.1.0.2 item 3) and by
+   *  the AutoSetup screen's mid-run "切换到高级模式" button. */
+  initialMode: WizardInitialMode;
+}
+
 export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [wizard, setWizard] = useState<WizardState>({ open: false, initialMode: "welcome" });
   const [checkedFirstRun, setCheckedFirstRun] = useState(false);
+  const navigate = useNavigate();
 
-  // Check if this is the first run (no Wine prefix exists yet)
+  // First-run detection: if no prefix exists yet, auto-open the wizard on
+  // the welcome screen (§4.1.0).
   useEffect(() => {
     async function checkFirstRun() {
       try {
         const config = await invoke("get_config");
         const prefixInfo = (await invoke("get_prefix_info", { config })) as { exists: boolean };
         if (!prefixInfo.exists) {
-          setShowSetupWizard(true);
+          setWizard({ open: true, initialMode: "welcome" });
         }
       } catch {
-        // If we can't check, show setup wizard to be safe
-        setShowSetupWizard(true);
+        // If we can't check, show wizard on welcome to be safe
+        setWizard({ open: true, initialMode: "welcome" });
       } finally {
         setCheckedFirstRun(true);
       }
@@ -34,9 +47,15 @@ export default function App() {
   }, []);
 
   // Allow any descendant (e.g. Launcher error banner) to request the wizard
-  // without threading callbacks through every Route/props layer.
+  // without threading callbacks through every Route/props layer. The event
+  // detail may optionally specify `initialMode` — otherwise we default to
+  // "advanced" since anyone dispatching this event usually already has a
+  // partial setup and wants to jump straight to the 5-step wizard.
   useEffect(() => {
-    const handler = () => setShowSetupWizard(true);
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ initialMode?: WizardInitialMode }>).detail;
+      setWizard({ open: true, initialMode: detail?.initialMode ?? "advanced" });
+    };
     window.addEventListener("open-setup-wizard", handler);
     return () => window.removeEventListener("open-setup-wizard", handler);
   }, []);
@@ -62,7 +81,16 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/launcher" element={<Launcher />} />
-              <Route path="/settings" element={<SettingsPage onOpenSetupWizard={() => setShowSetupWizard(true)} />} />
+              <Route
+                path="/settings"
+                element={
+                  <SettingsPage
+                    onOpenSetupWizard={() =>
+                      setWizard({ open: true, initialMode: "advanced" })
+                    }
+                  />
+                }
+              />
               <Route path="/about" element={<About />} />
             </Routes>
           </div>
@@ -70,7 +98,15 @@ export default function App() {
       </div>
 
       {/* Setup Wizard Modal */}
-      <SetupWizard open={showSetupWizard} onClose={() => setShowSetupWizard(false)} />
+      <SetupWizard
+        open={wizard.open}
+        initialMode={wizard.initialMode}
+        onClose={() => setWizard((w) => ({ ...w, open: false }))}
+        onLaunchWegame={() => {
+          setWizard((w) => ({ ...w, open: false }));
+          navigate("/launcher");
+        }}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { format as utilFormat } from "util";
 /**
  * Unreal Engine 风格的日志系统。
  *
- * 设计要点（v1.9.0）：
+ * 设计要点：
  *  - **每次运行一个日志文件**：启动时在 `logs/` 下创建
  *    `decky-wegame_<yyyyMMdd_HHmmss>.log`，当前会话的所有类别、所有等级都写进这一个文件。
  *  - **Category（类别）**：每个模块通过 `Log.category("WineBoot")` 取到

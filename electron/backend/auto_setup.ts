@@ -426,13 +426,12 @@ async function stageDeps(
 ): Promise<{ degraded?: string }> {
   emitProgress(state, emitter, "deps", 0, "预热 winetricks 缓存（best-effort）...", "running");
 
-  // Per the product decision for v1.12.0 (see DEVLOG), stage 3 does NOT
-  // auto-install any dependencies — the "dependency minimization" rule from
-  // PRD §4.1.1 says default is "all unchecked, install on demand".
-  // We only pre-seed the winetricks on-disk cache for verbs whose mirror
-  // manifest has known-good sources, so that if the user DOES later try to
-  // install dotnet46 / corefonts / ... from the dependencies page, the
-  // files are already local and they skip the slow / geo-restricted
+  // Per the "dependency minimization" rule from PRD §4.1.1, stage 3 does NOT
+  // auto-install any dependencies — the default is "all unchecked, install
+  // on demand". We only pre-seed the winetricks on-disk cache for verbs
+  // whose mirror manifest has known-good sources, so that if the user DOES
+  // later try to install dotnet46 / corefonts / ... from the dependencies
+  // page, the files are already local and they skip the slow / geo-restricted
   // winetricks fetch.
   //
   // With the current manifest (mirror-manifest.json), only dotnet46 is

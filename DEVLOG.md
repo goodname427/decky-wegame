@@ -6,6 +6,73 @@
 
 ---
 
+## 2026-04-18 — 欢迎页 + 自动配置进度页 落地（v1.12.0）
+
+### 背景
+v1.10.0 把「首启分流」的战略意图写进了 PRD §4.1.0 / §4.1.0.1，但**代码层面从未实现**——用户第一次打开应用依然是直接弹 5 步向导。这与 §1.3 P1 第 6 条「高级玩家逃生舱应在动作开始前就醒目可见」的意图直接冲突，也让 §4.1.0 里"大按钮 / 小按钮尺寸对比表达默认策略"的设计一直停在纸面。本次把欢迎页和自动配置进度页都真正落地。
+
+### 变更概览
+
+**新增后端：`electron/backend/auto_setup.ts`**（21 KB / ~630 行）
+- 4 阶段线性编排器：`proton` → `prefix` → `deps` → `wegame`
+  - proton：优先使用 Valve 官方 Proton，退而求其次用已装 GE-Proton，再没有就走 `downloadAndInstallGeProton` 从镜像池拉（M2 基建）
+  - prefix：`resolveWineBackendEnv` + `ensureWinePrefixInitialized`
+  - deps：**只预热 winetricks 缓存，不自动装任何依赖**（严格对齐 §4.1.1 依赖最小化原则）；当前 manifest 只登记 `dotnet46` 且 `sources` 为空，所以这一步基本是 no-op 一闪而过，符合 best-effort 设计
+  - wegame：`downloadAndInstallWegame` 一把抓；在 `phase=install` 时发 `status=needs-user` 带 `needsUser.kind='wine-installer-running'`，让 UI 展示「请在 Wine 窗口中完成安装向导」的提示，这是决策 2-C 的落地
+- 单运行实例语义：`startAutoSetup / requestAutoSetupCancel / isAutoSetupRunning`；全局仅一个 run，重复触发会拒绝
+- 事件通道：`auto-setup-progress`（独立新增，不复用 `install-progress` 避免与高级模式污染）+ 复用已有 `log-event`
+- 合作式取消：每个阶段边界 + 下载回调检查 cancelRequested；取消后 `status='cancelled'` 一帧收尾
+- 降级模型（`degrade`）：`proton-fallback` / `wegame-local-file` / `deps-skipped` 三种，UI 根据 kind 渲染对应的一键逃生按钮
+
+**新增 UI：`src/components/WelcomeScreen.tsx` + `AutoSetupScreen.tsx`**
+- WelcomeScreen（§4.1.0）：顶部一句话说明 / 屏幕中央大号渐变主按钮「🚀 一键自动安装」/ 右下角低对比度小按钮「高级模式 →」/ 右上角「稍后再说」链接；**本页不触发任何 IPC**（严格遵守 §4.1.0 "欢迎页不得预先触发"约束）
+- AutoSetupScreen（§4.1.0.1）：mount 时调 `startAutoSetup` 拿 `runId`；订阅 `auto-setup-progress` + `log-event`；渲染 4 阶段卡片横排 + 顶部整体进度条（含「X/4 · 已耗时 Ns」label，每秒一个 tick 保持秒数跳动）+ 当前阶段卡片 + 日志尾 10 行（可展开到 499 行）+ 右上角常驻「切换到高级模式 →」逃生按钮；三个终态卡片：done → 绿色成功卡 + 主按钮「启动 WeGame」；error → 红色卡 + 根据 `degrade.kind` 渲染对应逃生按钮（`wegame-local-file` 直接调 `pickWegameInstaller` + `installWegameFromLocal`，成功后伪造一个 done 帧让 UI 无缝切到成功卡，严格对齐 §4.1.1.5 「L2 全败 → L3 默认入口」的 UX 要求）；cancelled → 灰色卡提示带状态到高级模式
+
+**改造：`src/pages/SetupWizard.tsx` 引入 `wizardMode` 状态机**
+- 新增 props `initialMode?: 'welcome' | 'advanced'`（默认 welcome）+ `onLaunchWegame?(config)`
+- wizardMode 三态：welcome / auto / advanced；open 从关到开时自动重置为 initialMode
+- modal 容器内按 wizardMode 三路分支渲染；advanced 分支完整保留原 5 步向导 UI（不动其内部）
+- `runScan` 的 useEffect 加 `wizardMode === 'advanced'` 条件（welcome / auto 不扫描，符合 §4.1.0）
+
+**改造：`src/App.tsx`**
+- `showSetupWizard: boolean` 升级为 `wizard: { open, initialMode }`
+- 首启（无 prefix）→ `{open:true, initialMode:'welcome'}`；SettingsPage 的「重新配置环境」回调 → `initialMode='advanced'`；自定义事件 `open-setup-wizard` 的 `event.detail.initialMode` 默认 `'advanced'`
+- 新增 `onLaunchWegame` 回调：关闭 wizard + `navigate('/launcher')`
+
+**IPC 新增**（`electron/ipc.ts`）：`auto_setup_start` / `auto_setup_cancel` / `auto_setup_status`；前端封装 `startAutoSetup / cancelAutoSetup / getAutoSetupStatus`（`src/utils/api.ts`）
+
+**清理沿革标签**（§0.0 禁止的内容）
+- 前端 12 处：`SetupWizard.tsx`(4) / `WeGameInstaller.tsx`(2) / `Launcher.tsx`(3) / `Dashboard.tsx`(3) / `Dependencies.tsx`(4)
+- 后端 7 处：`ipc.ts`(5) / `dependencies.ts`(4) / `logger.ts`(1) / `diagnostics.ts`(1) / `auto_setup.ts`(自查 1，本 commit 写 deps 阶段时一不小心又写进去了，在收尾时清掉)
+- 章节号保留作索引；仅移除 `PRD vX.Y` / `(v1.7.1 新增)` 之类版本前缀
+
+**版本号同步**（`package.json` 1.11.0 → 1.12.0 / `PRD.md` 顶部元信息 / `README.md` 顶部版本号 + "高级模式逃生舱"条目明确三个合法入口 / `DEVLOG.md` 本条目）
+
+### 关键技术决策
+
+- **决策 1-A（阶段 3 不自动装依赖）**：阶段 3 只 `preseedWinetricksCache`，不碰 winetricks 安装动作。备选 1-B 是"阶段 3 默认装 corefonts + cjkfonts"，被否决，因为这会让"自动模式"偷偷改 §4.1.1 明确的「默认全部不勾选」默认策略，让用户在依赖管理页看到一堆自己没勾过却已安装的项。代价：阶段 3 在当前空 manifest 下几乎是 no-op，视觉上一闪而过；好处：语义上和 §4.1.1 对齐，一致性优先
+
+- **决策 2-C（阶段 4 同时跑下载 + 安装器）**：备选 2-A 只下载不跑，用户跑到依赖管理页再点一次"从缓存安装"，会打断"一站式"体验；备选 2-B 把 Wine 安装器也计入进度但不给用户提示，会让进度条停在 60% 一动不动很多分钟。落地 2-C：`phase=install` 到来时把 status 升级为 `needs-user` + `needsUser.kind='wine-installer-running'`，UI 在中部卡片展示黄色「请在 Wine 窗口中完成安装」提示，让用户知道**现在轮到他在 Wine 窗口里点下一步**；当 installer 进程退出且 WeGameLauncher.exe 出现时，自动切到 done 成功卡
+
+- **wizardMode 状态机 vs 新组件替换 SetupWizard**：备选方案是直接开 `WizardRoot.tsx` 顶替 `SetupWizard.tsx`，把原 5 步 UI 抽成 AdvancedSetup 子组件。被否决，因为原 5 步 UI 在 `SetupWizard.tsx` 内嵌了 ~700 行逻辑 + 多个 useState hook + 共享组件集成，一次性搬走会让 diff 变得巨大且不可 review。选择在 SetupWizard 现有框架上引入 wizardMode 状态机，三路分支渲染 —— welcome / auto 两个分支完全新增，advanced 分支原封不动包一层条件渲染；这样 git diff 主要集中在新增行和 4 处精确锚点替换，回滚成本低
+
+- **欢迎页不触发任何 IPC**：PRD §4.1.0 把这一条写死为硬约束。实现上就是 `runScan()` 的 useEffect 加 wizardMode 判断，以及 WelcomeScreen 组件内不调用任何 `invoke` / `listen`。这点在后续 M4/M5 加功能时要继续守住（例如"欢迎页显示已安装 Proton 数量"这类增强都会触发磁盘读，违反约束）
+
+- **Dependencies 页的「重新配置环境」入口原本已存在**：但之前都是跳到 welcome 页（不合理——用户已经在用产品了，应该直接进 advanced）。本次通过 `initialMode` 参数分流，这个按钮现在传 `'advanced'` 直接进 5 步向导
+
+### 关键文件
+- 新增：`electron/backend/auto_setup.ts` / `src/components/WelcomeScreen.tsx` / `src/components/AutoSetupScreen.tsx`
+- 改造：`electron/ipc.ts`、`src/utils/api.ts`、`src/pages/SetupWizard.tsx`、`src/App.tsx`
+- 同步：`package.json` / `PRD.md`（仅顶部元信息 + §5.6.4 里一条沿革标签）/ `README.md`（顶部版本号 + 高级模式条目）
+- 清理：11 个文件的版本沿革注释标签
+
+### 未实现 / 已知限制
+- **未实机验证**：国内代理池（gh-proxy 等）和 WeGame 直链在 Steam Deck 上的实际可达性未测过；任何一个阶段失败都会落到 degrade 降级路径而不是崩溃，但成功率待用户回报
+- **阶段 4 "等待 Wine GUI" 的超时**：目前没有超时机制，如果用户不操作 Wine 窗口，进度条会永远停在 needs-user 态；后续考虑加一个 5 分钟 heartbeat 提醒
+- **取消的精度**：合作式取消在下载过程中只能在下一个 progress 回调才生效，Wine 安装器已启动的情况下取消请求不会 kill 安装器子进程（只是停止后续阶段）；这是设计内可接受的权衡
+
+---
+
 ## 2026-04-18 — 外部资源下载统一收口到 `downloadFromMirrorPool`（v1.11.0）
 
 ### 背景

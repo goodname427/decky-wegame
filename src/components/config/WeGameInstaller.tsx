@@ -149,10 +149,11 @@ export default function WeGameInstaller({
   }
 
   /**
-   * v1.8.1 primary path: let the user pick a locally-downloaded .exe. This
-   * avoids depending on any hard-coded Tencent CDN URL (all of which were
-   * 404 at the time v1.8.1 shipped). The file is copied into the cache so
-   * subsequent reinstalls don't need the user to browse again.
+   * L3 fallback of §4.1.1.5: let the user pick a locally-downloaded .exe.
+   * This is the recommended primary path when the mirror pool is empty / all
+   * 404 (Tencent's official direct links currently return 404). The file is
+   * copied into the cache so subsequent reinstalls don't need the user to
+   * browse again.
    */
   async function handleInstallFromLocal() {
     if (!config) return;

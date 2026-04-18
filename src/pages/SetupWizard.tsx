@@ -13,6 +13,8 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import PathsSection from "../components/config/PathsSection";
 import ProtonPicker from "../components/config/ProtonPicker";
 import WeGameInstaller from "../components/config/WeGameInstaller";
+import WelcomeScreen from "../components/WelcomeScreen";
+import AutoSetupScreen from "../components/AutoSetupScreen";
 import type { EnvironmentConfig, DependencyCategory } from "../types";
 import { DEPENDENCY_LIST } from "../utils/constants";
 
@@ -46,9 +48,30 @@ function PackageIcon({ className }: { className?: string }) {
 interface SetupWizardProps {
   open: boolean;
   onClose: () => void;
+  /** Which screen the wizard opens on:
+   *  - "welcome"  : first-run default (§4.1.0) — shows the big button / small
+   *                 advanced-mode button / skip link.
+   *  - "advanced" : jump straight to the 5-step wizard. Used by the
+   *                 Dependencies page "重新配置环境" entry and by the
+   *                 AutoSetup mid-run escape hatch. */
+  initialMode?: "welcome" | "advanced";
+  /** Fired when the user clicks "启动 WeGame" on the AutoSetup success card.
+   *  Parent should close the wizard and navigate to the launcher page. */
+  onLaunchWegame?: (config: EnvironmentConfig) => void;
 }
 
-export default function SetupWizard({ open, onClose }: SetupWizardProps) {
+type WizardMode = "welcome" | "auto" | "advanced";
+
+export default function SetupWizard({ open, onClose, initialMode = "welcome", onLaunchWegame }: SetupWizardProps) {
+  const [wizardMode, setWizardMode] = useState<WizardMode>(initialMode);
+  // Reset wizardMode whenever the wizard transitions from closed → open,
+  // so that the next open respects the caller's intended initialMode even
+  // if the user previously navigated into a different mode within the
+  // same session.
+  useEffect(() => {
+    if (open) setWizardMode(initialMode);
+  }, [open, initialMode]);
+
   const [currentStep, setCurrentStep] = useState(1);
   const [localConfig, setLocalConfig] = useState<EnvironmentConfig | null>(null);
   const [selectedDeps, setSelectedDeps] = useState<string[]>([]);
@@ -88,7 +111,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
   const [scanned, setScanned] = useState(false);
   const [depStates, setDepStates] = useState<Record<string, DepState>>({});
 
-  // Step 5: WeGame installer state (PRD v1.7 §4.1 step 5). Only the
+  // Step 5: WeGame installer state (§4.1.1.5). Only the
   // installed-state is kept here to drive the "Finish" vs "Install later"
   // button copy in the navigation footer — the actual installer UI,
   // progress and retry handling live inside <WeGameInstaller variant="wizard">
@@ -107,16 +130,17 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     setSelectedDeps(DEPENDENCY_LIST.filter((d) => d.required).map((d) => d.id));
   }
 
-  // Run dependency scan when wizard opens
+  // Run dependency scan when the wizard opens in advanced mode. The
+  // welcome / auto screens MUST NOT trigger any side effects (PRD §4.1.0),
+  // so we gate the scan behind the advanced branch.
   useEffect(() => {
-    if (open && !scanned && !scanning) {
+    if (open && wizardMode === "advanced" && !scanned && !scanning) {
       runScan();
     }
-  }, [open]);
+  }, [open, wizardMode]);
 
-  // Subscribe to WeGame installer progress events (PRD v1.7 §4.1 step 5)
-  // — the event plumbing and UI are handled by <WeGameInstaller>; we only
-  // need to react to auto-advance from step 4.
+  // The WeGame-installer progress plumbing lives inside <WeGameInstaller>;
+  // we only need to react to step 4 → step 5 auto-advance below.
 
   // Auto-advance from step 4 to step 5 when dependency install completes.
   // <WeGameInstaller> will check installed state on mount; we just flip
@@ -127,8 +151,8 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     }
   }, [progress.status, currentStep, globalSkipped, localConfig]);
 
-  // (Step-5 pre-check that used to live here is now handled by
-  // <WeGameInstaller> itself through its initial useEffect + onStatusChange.)
+  // (Step-5 pre-check is handled by <WeGameInstaller> itself through its
+  // initial useEffect + onStatusChange.)
 
   async function runScan() {
     setScanning(true);
@@ -184,7 +208,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     return false;
   }
 
-  if (!open || !localConfig) return null;
+  if (!open) return null;
 
   const totalSteps = STEPS.length;
 
@@ -203,7 +227,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       await invoke("init_environment", { config: localConfig });
       // Decide the right path to take based on what the user picked:
       //   - globalSkipped    → user chose the big "skip wizard" button; use skip IPC
-      //   - 0 selected deps  → PRD v1.7 recommended default; still invoke the skip
+  //   - 0 selected deps  → recommended default (§4.1.1); still invoke the skip
       //     IPC because (a) nothing needs winetricks, so we must NOT prompt for
       //     sudo, and (b) the skip IPC emits status="completed", which is what
       //     step 5's auto-advance useEffect listens for.
@@ -276,7 +300,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       }
       case 2: return true; // Proton auto-selects if none chosen
       case 3: return (localConfig?.wine_prefix_path?.length ?? 0) > 0;
-      // PRD v1.7: with all fonts flipped to opt-in, it's perfectly valid to
+      // With all fonts flipped to opt-in (§4.1.1), it's perfectly valid to
       // arrive at step 4 with zero dependencies selected — that's actually
       // the recommended default. Do NOT gate "next step / start install" on
       // selectedDeps.length here; the 0-deps case is handled in handleFinish()
@@ -298,16 +322,56 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
 
       {/* Modal content */}
       <div className="relative z-10 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-surface-dark p-6 shadow-2xl mx-4">
-        {/* Close button */}
-        {canClose && (
-          <button
-            onClick={onClose}
-            className="absolute right-4 top-4 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-gray-200"
-          >
-            <X className="h-5 w-5" />
-          </button>
+        {/* §4.1.0 — Welcome screen: big / small button dispatcher, no side
+            effects. Shown on first run unless the caller explicitly passed
+            initialMode="advanced" (e.g. the "重新配置环境" entry). */}
+        {wizardMode === "welcome" && (
+          <WelcomeScreen
+            onStartAuto={() => setWizardMode("auto")}
+            onEnterAdvanced={() => setWizardMode("advanced")}
+            onSkip={onClose}
+          />
         )}
 
+        {/* §4.1.0.1 — Linear auto-setup progress page. Requires a live config
+            so the backend orchestrator has something to work with; if it
+            hasn't loaded yet, show a cheap loader instead of risking a null
+            crash. */}
+        {wizardMode === "auto" && (
+          localConfig ? (
+            <AutoSetupScreen
+              config={localConfig}
+              onEscapeToAdvanced={() => setWizardMode("advanced")}
+              onLaunchWegame={(finalConfig) => {
+                onClose();
+                onLaunchWegame?.(finalConfig);
+              }}
+            />
+          ) : (
+            <div className="flex items-center justify-center py-24 text-sm text-gray-400">
+              正在加载环境配置...
+            </div>
+          )
+        )}
+
+        {/* §4.1.1 — Full 5-step advanced wizard (original UI, unchanged). */}
+        {wizardMode === "advanced" && (
+          <>
+            {/* Close button */}
+            {canClose && (
+              <button
+                onClick={onClose}
+                className="absolute right-4 top-4 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-gray-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+
+            {!localConfig ? (
+              <div className="flex items-center justify-center py-24 text-sm text-gray-400">
+                正在加载环境配置...
+              </div>
+            ) : (
         <div className="space-y-6">
       {/* Step Indicator */}
       <div className="glass-card p-4">
@@ -516,7 +580,7 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                           </div>
                         )}
 
-                        {/* PRD v1.8: for winetricks, offer a one-click
+              {/* For winetricks, offer a one-click
                             userlocal install so users don't need sudo.
                             Mirrors the same action on the Dependencies page
                             ("一键下载到 ~/.local/bin"). */}
@@ -830,6 +894,9 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
         </div>
       </div>
         </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Global skip wizard confirm dialog */}

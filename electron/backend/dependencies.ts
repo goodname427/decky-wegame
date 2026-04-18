@@ -356,7 +356,7 @@ interface DependencyDef {
   required: boolean;
 }
 
-// PRD v1.7: Dependency minimization strategy — ALL deps are opt-in.
+// Dependency minimization strategy (§4.1.1) — ALL deps are opt-in.
 // Proton-GE already bundles corefonts/CJK rendering, vcrun, d3dx9 etc.,
 // and winetricks font installs frequently fail on fresh/older prefixes due
 // to WoW64 / regedit DLL issues (c0000135). Users should run WeGame first
@@ -445,7 +445,7 @@ function checkInstalledWinetricks(prefixPath: string, config?: EnvironmentConfig
 }
 
 // ---------------------------------------------------------------------------
-// PRD v1.5 §4.2.2.3 — Async + cached variant
+// Async + cached variant (§4.2.2.3).
 // ---------------------------------------------------------------------------
 //
 // The sync `checkInstalledWinetricks` above runs `winetricks list-installed`
@@ -806,7 +806,7 @@ export async function installDependencies(
   let failed = 0;
   const failedDeps: string[] = [];
 
-  // PRD v1.4 §4.2.2.2: Pre-seed winetricks cache from domestic mirrors to
+// §4.2.2.2: Pre-seed winetricks cache from domestic mirrors to
   // avoid well-known upstream failures (Microsoft CDN cert issues, web.archive
   // IPv6 unreachable, etc.). Best-effort: we never abort on pre-seed failure.
   try {
@@ -876,7 +876,7 @@ export async function installDependencies(
     log.warn(`Failed dependencies: ${failedDeps.join(", ")}`);
   }
 
-  // PRD v1.5 §4.2.2.3: invalidate the installed-status cache so the next
+// §4.2.2.3: invalidate the installed-status cache so the next
   // `getDependencyListAsync` call on the frontend reflects the real state.
   invalidateDependencyCache(winePrefixPath);
 
