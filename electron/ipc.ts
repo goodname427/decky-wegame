@@ -62,6 +62,15 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return getDependencyList(prefixPath);
   });
 
+  ipcMain.handle("install_winetricks", async (_event, args: { password: string }) => {
+    try {
+      await installWinetricks(args.password);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle("start_install_dependencies", async (_event, args: { config: EnvironmentConfig; selectedIds: string[]; sudoPassword?: string }) => {
     if (installing) {
       throw new Error("Installation already in progress");

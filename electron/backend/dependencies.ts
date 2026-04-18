@@ -145,7 +145,13 @@ async function installWinetricks(sudoPassword?: string): Promise<void> {
       } else {
         const errorMsg = `Failed to install winetricks (exit code: ${code}). Error: ${errorOutput}`;
         log.error(errorMsg);
-        reject(new Error("Failed to install winetricks. Please install it manually: sudo pacman -S winetricks"));
+        
+        // 检查是否是密码错误
+        if (errorOutput.includes("Sorry, try again") || errorOutput.includes("incorrect password") || errorOutput.includes("Authentication failure")) {
+          reject(new Error("密码错误，请重新输入"));
+        } else {
+          reject(new Error("Failed to install winetricks. Please install it manually: sudo pacman -S winetricks"));
+        }
       }
     });
 
@@ -164,6 +170,8 @@ async function installWinetricks(sudoPassword?: string): Promise<void> {
     }, 60000); // 60 seconds timeout
   });
 }
+
+export { installWinetricks };
 
 export async function installDependencies(
   winePrefixPath: string,

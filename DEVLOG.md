@@ -28,3 +28,8 @@
 - **修复winetricks安装流程**：修复输入密码后卡住的问题，确保密码验证后能正确安装winetricks并继续依赖安装
 - **新增全局跳过功能**：添加整个安装向导的跳过功能，用户可在任何步骤选择跳过wine、proton、依赖等所有配置步骤
 - **改进用户体验**：在导航栏添加全局跳过按钮，支持在任何步骤快速跳过整个安装过程
+
+## 2026-04-18 — 密码验证问题修复
+- **修复密码错误提示问题**：修复前端调用 install_winetricks 但后端未注册 IPC 处理函数的问题
+- **改进错误处理**：后端正确识别密码错误类型（"Sorry, try again"、"incorrect password"、"Authentication failure"）
+- **完善IPC通信**：添加 install_winetricks IPC 处理函数，确保密码验证流程正常

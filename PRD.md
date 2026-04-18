@@ -259,5 +259,26 @@
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-04-18 | v1.1 | 修复密码验证问题：前端调用 install_winetricks 但后端未注册 IPC 处理函数，导致密码错误提示 |
 | 2026-04-18 | v1.0 | 初始版本：整理之前所有需求，建立 PRD |
+
+### v1.1 修复详情
+
+**问题**：用户报告输入密码后一直提示密码错误
+
+**根本原因**：
+1. 前端 SetupWizard 调用 `invoke("install_winetricks", { password })`
+2. 但后端 IPC 处理器中没有注册 `install_winetricks` 处理函数
+3. 导致调用失败，前端错误处理逻辑显示"密码错误"
+
+**修复方案**：
+1. 在 IPC 处理器中添加 `install_winetricks` 处理函数
+2. 修复后端 `installWinetricks` 函数的密码验证逻辑，正确识别密码错误
+3. 更新前端 API 层，添加 `installWinetricks` 函数导出
+4. 修复前端错误处理逻辑，根据错误类型显示不同提示信息
+
+**技术细节**：
+- 后端：检查错误输出中的关键词（"Sorry, try again"、"incorrect password"、"Authentication failure"）
+- 前端：根据错误消息内容区分密码错误和安装失败
+- IPC：正确返回 `{ success: boolean, error?: string }` 格式的响应
 

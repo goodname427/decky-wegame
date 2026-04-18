@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke, startInstallDependencies } from "../utils/api";
+import { invoke, installWinetricks, startInstallDependencies } from "../utils/api";
 import { ChevronLeft, ChevronRight, Check, Zap, Rocket, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2, Download, Edit3, ExternalLink, SkipForward } from "lucide-react";
 import ProgressBar from "../components/ProgressBar";
 import useEnvironment, { useProtonVersions } from "../hooks/useEnvironment";
@@ -204,13 +204,17 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
     
     try {
       // First install winetricks with password
-      await invoke("install_winetricks", { password });
+      await installWinetricks(password);
       // Then start dependency installation
       await startInstallDependencies(localConfig, selectedDeps);
     } catch (err) {
       console.error("Installation failed:", err);
       // Show password dialog again if authentication failed
-      setPasswordError("密码错误，请重新输入");
+      if (err.message && err.message.includes("密码错误")) {
+        setPasswordError("密码错误，请重新输入");
+      } else {
+        setPasswordError("安装失败，请重试");
+      }
       setShowPasswordDialog(true);
     }
     

@@ -69,6 +69,8 @@ export const validateProtonPath = (path: string) =>
 // Dependencies
 export const getDependencyList = (config?: any) =>
   invoke("get_dependency_list", config ? { config } : undefined);
+export const installWinetricks = (password: string) =>
+  invoke("install_winetricks", { password });
 export const startInstallDependencies = (config: any, selectedIds: string[], sudoPassword?: string) =>
   invoke("start_install_dependencies", { config, selectedIds, sudoPassword });
 
