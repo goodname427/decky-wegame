@@ -27,6 +27,11 @@ import {
   clearInstallerCache,
   installWegameFromLocalFile,
 } from "./backend/wegame_installer";
+import {
+  startAutoSetup,
+  requestAutoSetupCancel,
+  isAutoSetupRunning,
+} from "./backend/auto_setup";
 import { EnvironmentConfig, GameEntry } from "./backend/types";
 import { cleanupAllLogs } from "./backend/logger";
 import { runDiagnostics } from "./backend/diagnostics";
@@ -58,8 +63,8 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   });
 
   ipcMain.handle("reset_environment", async (_event, args: { config: EnvironmentConfig }) => {
-    // PRD v1.5 §4.2.2.3: invalidate cache so the next dep-list query re-reads
-    // state from the fresh prefix.
+    // Invalidate cache so the next dep-list query re-reads state from the
+    // fresh prefix (PRD §4.2.2.3).
     const prefixPath = getPrefixPath(args.config);
     invalidateDependencyCache(prefixPath);
     return await deletePrefix(args.config);
@@ -83,10 +88,10 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   // Dependencies
   //
-  // PRD v1.5 §4.2.2.3: we must use the async+cached variant here.
-  // The sync `getDependencyList` is kept exported for legacy callers but
-  // never used by the IPC handler — `execSync` on `winetricks list-installed`
-  // would block the Electron main-process IPC queue for 2~5s (wine + wineserver
+  // We use the async+cached variant here (PRD §4.2.2.3). The sync
+  // `getDependencyList` is kept exported for legacy callers but never used
+  // by the IPC handler — `execSync` on `winetricks list-installed` would
+  // block the Electron main-process IPC queue for 2~5s (wine + wineserver
   // cold start), freezing every UI action during that window.
   ipcMain.handle("get_dependency_list", async (_event, args?: { config?: EnvironmentConfig }) => {
     const prefixPath = args?.config ? getPrefixPath(args.config) : undefined;
@@ -172,7 +177,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     }
   });
 
-  // WeGame runtime diagnostics (PRD v1.4 §4.7)
+  // WeGame runtime diagnostics (PRD §4.7)
   ipcMain.handle("run_wegame_diagnostics", async (_event, args?: { config?: EnvironmentConfig }) => {
     try {
       return await runDiagnostics(args?.config);
@@ -271,7 +276,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return await installWinetricksUserlocal();
   });
 
-  // --- WeGame installer (PRD v1.7 §4.1 step 5) -----------------------------
+  // --- WeGame installer (PRD §4.1.1.5) -----------------------------------
 
   ipcMain.handle("get_wegame_installer_info", async (_event, args?: { config?: EnvironmentConfig }) => {
     const info = getInstallerInfo(args?.config);
@@ -317,10 +322,10 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return clearInstallerCache(args?.config);
   });
 
-  // v1.8.1: let the user pick a locally-downloaded WeGame installer .exe.
-  // Returns { canceled: boolean; filePath?: string }. The file dialog is
-  // modal to the currently-active window so it works both in wizard and
-  // dependencies-page flows.
+  // Let the user pick a locally-downloaded WeGame installer .exe as the L3
+  // escape hatch of §4.1.1.5. Returns { canceled: boolean; filePath?: string }.
+  // The file dialog is modal to the currently-active window so it works both
+  // in wizard and dependencies-page flows.
   ipcMain.handle("pick_wegame_installer", async () => {
     const win = getMainWindow();
     const result = await dialog.showOpenDialog(win ?? undefined!, {
@@ -337,7 +342,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return { canceled: false, filePath: result.filePaths[0] };
   });
 
-  // v1.8.1: run a user-supplied local installer .exe inside the prefix.
+  // Run a user-supplied local installer .exe inside the prefix (§4.1.1.5 L3).
   // Mirrors install_wegame's event contract (emits on "wegame-install-progress").
   ipcMain.handle(
     "install_wegame_from_local",
@@ -359,6 +364,38 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return await downloadAndInstallUpdate(args.downloadUrl, args.fileName, (progress) => {
       win?.webContents.send("update-download-progress", progress);
     });
+  });
+
+  // --- Auto-setup orchestrator (PRD §4.1.0.1) -----------------------------
+  //
+  // Broadcast channels:
+  //   "auto-setup-progress"  AutoSetupProgress frames, one per state change
+  //   "log-event"            raw log lines (shared with the advanced wizard)
+
+  ipcMain.handle("auto_setup_start", async (_event, args: { config: EnvironmentConfig }) => {
+    const win = getMainWindow();
+    try {
+      const { runId } = startAutoSetup(args.config, {
+        emitProgress: (p) => {
+          win?.webContents.send("auto-setup-progress", p);
+        },
+        emitLog: (l) => {
+          win?.webContents.send("log-event", l);
+        },
+      });
+      return { success: true, runId };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  });
+
+  ipcMain.handle("auto_setup_cancel", async (_event, args: { runId: string }) => {
+    return requestAutoSetupCancel(args.runId);
+  });
+
+  ipcMain.handle("auto_setup_status", async () => {
+    return { running: isAutoSetupRunning() };
   });
 }
 

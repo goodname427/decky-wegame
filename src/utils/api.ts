@@ -119,11 +119,11 @@ export const checkForUpdate = (channel: string) =>
 export const downloadAndInstallUpdate = (downloadUrl: string, fileName: string) =>
   invoke("download_and_install_update", { downloadUrl, fileName });
 
-// WeGame runtime diagnostics (PRD v1.4 §4.7)
+// WeGame runtime diagnostics (§4.7)
 export const runWegameDiagnostics = (config?: any) =>
   invoke("run_wegame_diagnostics", config ? { config } : undefined);
 
-// WeGame installer (PRD v1.7 §4.1 step 5)
+// WeGame installer (§4.1.1.5)
 export const getWegameInstallerInfo = (config?: any) =>
   invoke("get_wegame_installer_info", config ? { config } : undefined);
 export const checkWegameInstalled = (config: any) =>
@@ -137,10 +137,20 @@ export const installWegame = (config: any, forceRedownload?: boolean) =>
 export const clearWegameInstallerCache = (config?: any) =>
   invoke("clear_wegame_installer_cache", config ? { config } : undefined);
 
-// v1.8.1: pick a local installer file via native dialog, and install from it.
-// Returns { canceled: boolean; filePath?: string } from the picker, and the
-// same { success; exePath?; error? } shape as install_wegame from the install.
+// Local WeGame installer (§4.1.1.5 L3 fallback): pick a .exe via native
+// dialog and install from it. Picker returns { canceled; filePath? }; the
+// install returns { success; exePath?; error? } identical to install_wegame.
 export const pickWegameInstaller = () =>
   invoke<{ canceled: boolean; filePath?: string }>("pick_wegame_installer");
 export const installWegameFromLocal = (config: any, localPath: string) =>
   invoke("install_wegame_from_local", { config, localPath });
+
+// Auto-setup orchestrator (§4.1.0.1) — kicks off the 4-stage pipeline, then
+// progress is emitted on the "auto-setup-progress" event channel (and
+// `log-event` for raw log lines, same as the advanced wizard).
+export const startAutoSetup = (config: any) =>
+  invoke<{ success: boolean; runId?: string; error?: string }>("auto_setup_start", { config });
+export const cancelAutoSetup = (runId: string) =>
+  invoke<{ cancelled: boolean }>("auto_setup_cancel", { runId });
+export const getAutoSetupStatus = () =>
+  invoke<{ running: boolean }>("auto_setup_status");
