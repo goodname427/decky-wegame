@@ -171,13 +171,10 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       if (globalSkipped) {
         // Skip entire wizard
         await invoke("skip_dependency_installation", { config: localConfig });
-      } else if (skippedInstall) {
-        // Skip only dependency installation
-        await invoke("skip_dependency_installation", { config: localConfig });
       } else {
         // Check if we need sudo permissions for winetricks
-        const systemInfo = await invoke("get_system_info");
-        if (!systemInfo.winetricks_available) {
+        const sysInfo = await invoke<{ winetricks_available: boolean }>("get_system_info");
+        if (!sysInfo.winetricks_available) {
           // Show password dialog for winetricks installation
           setShowPasswordDialog(true);
           return; // Wait for password input
@@ -206,8 +203,9 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
       await startInstallDependencies(localConfig, selectedDeps);
     } catch (err) {
       console.error("Installation failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
       // Show password dialog again if authentication failed
-      if (err.message && err.message.includes("密码错误")) {
+      if (msg.includes("密码错误")) {
         setPasswordError("密码错误，请重新输入");
       } else {
         setPasswordError("安装失败，请重试");
@@ -483,8 +481,6 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                 </button>
               </div>
             )}
-          </div>
-        )}
 
             {/* Proton 选择部分 */}
             <div className="space-y-4 pt-4 border-t border-white/10">
@@ -493,57 +489,58 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                 <p className="mt-1 text-sm text-gray-400">选择用于运行 WeGame 的 Proton 版本。推荐使用 GE-Proton 以获得最佳兼容性。</p>
               </div>
 
-            {protonLoading ? (
-              <div className="flex items-center justify-center py-12 text-gray-400">正在扫描可用版本...</div>
-            ) : protonVersions.length === 0 ? (
-              <div className="rounded-lg border border-neon-yellow/20 bg-neon-yellow/5 p-4 text-sm text-gray-300">
-                未检测到任何 Proton 版本。请先安装 GE-Proton 到以下目录之一：
-                <ul className="mt-2 ml-4 list-disc space-y-1 text-xs text-gray-400">
-                  <li>~/.steam/root/compatibilitytools.d/</li>
-                  <li>~/.local/share/Steam/compatibilitytools.d/</li>
-                </ul>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-[280px] overflow-y-auto pr-2">
-                {protonVersions.map((ver) => (
-                  <button
-                    key={ver.path}
-                    onClick={() => updateConfig({ proton_path: ver.path })}
-                    className={`w-full flex items-center justify-between rounded-lg px-4 py-3 text-left transition-all ${
-                      localConfig.proton_path === ver.path
-                        ? "border-primary/50 bg-primary/8 ring-1 ring-primary/30"
-                        : "border-white/5 hover:bg-white/5"
-                    } border`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`h-3 w-3 rounded-full ${localConfig.proton_path === ver.path ? "bg-primary shadow-sm shadow-primary/50" : "bg-gray-600"}`} />
-                      <div>
-                        <span className={`font-medium ${localConfig.proton_path === ver.path ? "text-primary" : "text-gray-200"}`}>
-                          {ver.name}
-                        </span>
-                        {ver.is_recommended && (
-                          <span className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">推荐</span>
-                        )}
+              {protonLoading ? (
+                <div className="flex items-center justify-center py-12 text-gray-400">正在扫描可用版本...</div>
+              ) : protonVersions.length === 0 ? (
+                <div className="rounded-lg border border-neon-yellow/20 bg-neon-yellow/5 p-4 text-sm text-gray-300">
+                  未检测到任何 Proton 版本。请先安装 GE-Proton 到以下目录之一：
+                  <ul className="mt-2 ml-4 list-disc space-y-1 text-xs text-gray-400">
+                    <li>~/.steam/root/compatibilitytools.d/</li>
+                    <li>~/.local/share/Steam/compatibilitytools.d/</li>
+                  </ul>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[280px] overflow-y-auto pr-2">
+                  {protonVersions.map((ver) => (
+                    <button
+                      key={ver.path}
+                      onClick={() => updateConfig({ proton_path: ver.path })}
+                      className={`w-full flex items-center justify-between rounded-lg px-4 py-3 text-left transition-all ${
+                        localConfig.proton_path === ver.path
+                          ? "border-primary/50 bg-primary/8 ring-1 ring-primary/30"
+                          : "border-white/5 hover:bg-white/5"
+                      } border`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`h-3 w-3 rounded-full ${localConfig.proton_path === ver.path ? "bg-primary shadow-sm shadow-primary/50" : "bg-gray-600"}`} />
+                        <div>
+                          <span className={`font-medium ${localConfig.proton_path === ver.path ? "text-primary" : "text-gray-200"}`}>
+                            {ver.name}
+                          </span>
+                          {ver.is_recommended && (
+                            <span className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">推荐</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <span className="text-xs text-gray-500">{ver.version}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+                      <span className="text-xs text-gray-500">{ver.version}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-            <button
-              onClick={() => {
-                if (protonVersions.length > 0 && !localConfig.proton_path) {
-                  updateConfig({ proton_path: protonVersions[0].path });
-                }
-              }}
-              disabled={protonVersions.length === 0}
-              className="neon-secondary flex items-center gap-2 text-sm mt-2"
-            >
-              <Zap className="h-4 w-4" />
-              自动推荐最佳版本
-            </button>
+              <button
+                onClick={() => {
+                  if (protonVersions.length > 0 && !localConfig.proton_path) {
+                    updateConfig({ proton_path: protonVersions[0].path });
+                  }
+                }}
+                disabled={protonVersions.length === 0}
+                className="neon-secondary flex items-center gap-2 text-sm mt-2"
+              >
+                <Zap className="h-4 w-4" />
+                自动推荐最佳版本
+              </button>
+            </div>
           </div>
         )}
 
@@ -583,11 +580,11 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
               <input
                 type="text"
                 value="/tmp/decky-wegame"
-                onChange={(e) => updateConfig({ temp_download_path: e.target.value })}
+                readOnly
                 placeholder="/tmp/decky-wegame"
-                className="input-field font-mono text-sm"
+                className="input-field font-mono text-sm opacity-70"
               />
-              <p className="mt-1 text-xs text-gray-500">安装过程中的临时文件下载位置</p>
+              <p className="mt-1 text-xs text-gray-500">安装过程中的临时文件下载位置（固定）</p>
             </div>
 
             <div className="rounded-lg border border-white/5 bg-surface-dark/60 p-3">
@@ -677,7 +674,8 @@ export default function SetupWizard({ open, onClose }: SetupWizardProps) {
                 预计占用 ~{(selectedDeps.length * 45).toFixed(0)} MB
               </span>
             </div>
-            
+          </div>
+        )}
 
         {currentStep === 4 && (
           <div className="space-y-5">
