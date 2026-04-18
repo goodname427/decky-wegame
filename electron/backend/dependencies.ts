@@ -73,6 +73,15 @@ export function resolveWineBackendEnv(config?: EnvironmentConfig): {
     if (fs.existsSync(p)) dllPaths.push(p);
   }
 
+  // 4b. Compose LD_LIBRARY_PATH so the Proton-bundled wine binaries can find
+  // their private libs (libwine.so etc.). Without this, `wine64 foo.exe`
+  // typically hangs silently right after printing the initial `cd` line.
+  const ldPaths: string[] = [];
+  for (const rel of ["files/lib64", "files/lib", "dist/lib64", "dist/lib"]) {
+    const p = path.join(protonDir, rel);
+    if (fs.existsSync(p)) ldPaths.push(p);
+  }
+
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     PATH: `${protonBin}:${process.env.PATH ?? ""}`,
@@ -82,9 +91,22 @@ export function resolveWineBackendEnv(config?: EnvironmentConfig): {
     WINESERVER: wineserver,
     WINEARCH: "win64",
     DISPLAY: process.env.DISPLAY || ":0",
+    // Force winetricks to run fully non-interactively:
+    //   - W_OPT_UNATTENDED=1 is stronger than --unattended and skips EULA/GUI dialogs
+    //   - WINETRICKS_GUI=none disables zenity/kdialog fallback that would block on stdin
+    //   - WINEDEBUG=-all silences the normal wine firehose so progress logs stay readable
+    W_OPT_UNATTENDED: "1",
+    WINETRICKS_GUI: "none",
+    WINEDEBUG: process.env.WINEDEBUG || "-all",
+    // Prevent winetricks from hitting GitHub to self-update at start-up,
+    // which can hang for minutes behind the GFW.
+    WINETRICKS_LATEST_VERSION_CHECK: "disabled",
   };
   if (dllPaths.length > 0) {
     env.WINEDLLPATH = dllPaths.join(":");
+  }
+  if (ldPaths.length > 0) {
+    env.LD_LIBRARY_PATH = `${ldPaths.join(":")}:${process.env.LD_LIBRARY_PATH ?? ""}`;
   }
   if (config?.wine_prefix_path) {
     env.WINEPREFIX = expandPath(config.wine_prefix_path);
@@ -446,13 +468,33 @@ function runWinetricksSingle(
   backendEnv: Record<string, string>
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const childEnv = { ...backendEnv, WINEPREFIX: prefixPath };
+    log.info(`[winetricks:${wtId}] spawn: winetricks -q --unattended ${wtId}`);
+    log.info(`[winetricks:${wtId}]   WINEPREFIX=${childEnv.WINEPREFIX}`);
+    log.info(`[winetricks:${wtId}]   W_OPT_UNATTENDED=${childEnv.W_OPT_UNATTENDED} WINETRICKS_GUI=${childEnv.WINETRICKS_GUI}`);
+
     const child = spawn("winetricks", ["-q", "--unattended", wtId], {
-      env: { ...backendEnv, WINEPREFIX: prefixPath },
+      env: childEnv,
+      // Detach stdin so winetricks / zenity fallback cannot block waiting for input
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     let output = "";
+    let lastActivity = Date.now();
+
+    // Periodic heartbeat so UI does not appear frozen during long downloads
+    // (e.g. dotnet46 pulls ~60MB silently before printing anything).
+    const heartbeat = setInterval(() => {
+      const idleSec = Math.round((Date.now() - lastActivity) / 1000);
+      const now = new Date();
+      const ts = now.toTimeString().slice(0, 8) + "." + String(now.getMilliseconds()).padStart(3, "0");
+      const msg = `… ${wtId} still running (idle ${idleSec}s, this is normal during downloads)`;
+      log.info(`[winetricks:${wtId}] ${msg}`);
+      emitter.emitLog({ level: "info", message: msg, timestamp: ts });
+    }, 15000);
 
     child.stdout?.on("data", (data: Buffer) => {
+      lastActivity = Date.now();
       for (const line of data.toString().split("\n")) {
         const trimmed = line.trim();
         if (trimmed) {
@@ -466,6 +508,7 @@ function runWinetricksSingle(
     });
 
     child.stderr?.on("data", (data: Buffer) => {
+      lastActivity = Date.now();
       for (const line of data.toString().split("\n")) {
         const trimmed = line.trim();
         if (trimmed) {
@@ -478,12 +521,14 @@ function runWinetricksSingle(
     });
 
     child.on("close", (code) => {
+      clearInterval(heartbeat);
       log.info(`[winetricks:${wtId}] Process exited with code: ${code}`);
       if (code === 0) resolve(output);
       else reject(new Error(`winetricks ${wtId} failed with exit code: ${code}`));
     });
 
     child.on("error", (err) => {
+      clearInterval(heartbeat);
       log.error(`[winetricks:${wtId}] Process error: ${err.message}`);
       reject(new Error(`Failed to run winetricks: ${err.message}`));
     });
