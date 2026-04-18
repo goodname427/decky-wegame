@@ -1,0 +1,54 @@
+{
+  "_meta": {
+    "description": "Mirror manifest — single source of truth for every external download source this app can use. Business code must NEVER hardcode a URL; always go through electron/backend/mirrors.ts which consumes this file. URL rot is expected; updating the lists here does NOT require a MINOR version bump (see PRD §5.6.5).",
+    "docsRef": "PRD.md §5.6"
+  },
+
+  "githubProxies": {
+    "_comment": "Prefix-based GitHub accelerators. Applied to any raw github.com / raw.githubusercontent.com / api.github.com URL by simple prefix concatenation. The original URL (no prefix) is always tried last so users with their own proxy still work. None of these have been empirically verified from a real Steam Deck — failures fall through to the next candidate automatically.",
+    "prefixes": [
+      "https://gh-proxy.com/",
+      "https://ghproxy.net/",
+      "https://ghproxy.homeboyc.cn/",
+      "https://mirror.ghproxy.com/"
+    ],
+    "trailingOriginal": true
+  },
+
+  "pools": {
+    "github-release": {
+      "_comment": "Pool A of PRD §5.6.2 — applied to any https://github.com/.../releases/download/... asset. Candidates are derived at runtime by prefixing with each entry of githubProxies.prefixes, plus the original URL as final fallback.",
+      "strategy": "github-prefix"
+    },
+    "github-raw": {
+      "_comment": "Same as github-release but for https://raw.githubusercontent.com/... (used by e.g. the winetricks installer script).",
+      "strategy": "github-prefix"
+    },
+    "github-api": {
+      "_comment": "https://api.github.com/... for release metadata, workflow runs, etc. JSON-only; no file downloads. Prefixed the same way as github-release.",
+      "strategy": "github-prefix"
+    },
+    "wegame-installer": {
+      "_comment": "Pool B of PRD §5.6.2. Static candidate list for the WeGame setup .exe. These Tencent URLs are all known to 404 as of authoring time; they are kept as sentinels in case Tencent re-publishes a static direct link. Business code must always prepend the user override EnvironmentConfig.extra_env_vars.WEGAME_INSTALLER_URL to this list at runtime.",
+      "strategy": "static",
+      "candidates": [
+        "https://dldir1.qq.com/WeGame/Setup/WeGameSetup.exe",
+        "https://dldir1.qq.com/wegame/WeGameSetup.exe",
+        "https://dldir1.qq.com/wegame/Setup/WeGameSetup.exe"
+      ]
+    }
+  },
+
+  "winetricksVerbs": {
+    "_comment": "Pool C of PRD §5.6.2 — files that winetricks expects to find pre-seeded in ~/.cache/winetricks/<verb>/<filename>. Each entry's `sources` list is tried in order; if every entry fails the preseeder silently skips this verb and winetricks will do its own (possibly failing) upstream fetch. `sha256` is optional — when present the downloaded file is validated before being committed to the cache. The initial source lists here are conservative: we only list sources we have reason to believe can serve the file. Adding a new verified mirror = append to its `sources`; no code change needed.",
+    "entries": [
+      {
+        "verb": "dotnet46",
+        "filename": "NDP46-KB3045557-x86-x64-AllOS-ENU.exe",
+        "sha256": "",
+        "sources": [],
+        "note": "Known #1 failure mode in real user logs. No verified domestic mirror yet; leave empty so preseeder skips and winetricks tries its own upstream. Append a verified mirror here once one is confirmed reachable from a Steam Deck."
+      }
+    ]
+  }
+}
